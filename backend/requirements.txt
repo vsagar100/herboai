@@ -1,0 +1,12 @@
+Flask==2.3.2
+Flask-RESTful==0.3.9
+Flask-Cors==4.0.0
+SQLAlchemy==2.0.19
+marshmallow==3.19.0
+marshmallow-sqlalchemy==0.29.0
+routes==2.4.1
+
+# Optional - for future LLM integration
+openai==1.11.0
+sentence-transformers==2.2.2
+chromadb==0.4.24
