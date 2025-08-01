@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Leaf, User, Bot, Search, Sparkles, Heart, Shield, Zap, Wind } from 'lucide-react';
+import { Send, Leaf, User, Bot, Search, Sparkles, Heart, Shield, Zap, Wind, LogIn, Settings } from 'lucide-react';
 
 const HerboAI = () => {
   const [messages, setMessages] = useState([
@@ -12,6 +12,7 @@ const HerboAI = () => {
   ]);
   const [inputMessage, setInputMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [showAdminLogin, setShowAdminLogin] = useState(false);
   const messagesEndRef = useRef(null);
 
   const herbalDatabase = {
@@ -180,16 +181,27 @@ ${recommendations.map(plant => `🌱 **${plant.name}**
       {/* Header */}
       <div className="bg-white/80 backdrop-blur-md border-b border-green-100 sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 py-4">
-          <div className="flex items-center space-x-3">
-            <div className="bg-gradient-to-r from-green-500 to-emerald-500 p-2 rounded-xl">
-              <Leaf className="w-8 h-8 text-white" />
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="bg-gradient-to-r from-green-500 to-emerald-500 p-2 rounded-xl">
+                <Leaf className="w-8 h-8 text-white" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">
+                  HerboAI - Virtual Herbal Garden
+                </h1>
+                <p className="text-sm text-gray-600">AI-powered AYUSH medicinal plant guidance</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-2xl font-bold bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">
-                HerboAI - Virtual Herbal Garden
-              </h1>
-              <p className="text-sm text-gray-600">AI-powered AYUSH medicinal plant guidance</p>
-            </div>
+            
+            {/* Admin Login Button */}
+            <button
+              onClick={() => setShowAdminLogin(true)}
+              className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white rounded-lg transition-all duration-200 shadow-md hover:shadow-lg"
+            >
+              <LogIn className="w-4 h-4" />
+              <span className="text-sm font-medium">Admin</span>
+            </button>
           </div>
         </div>
       </div>
@@ -317,6 +329,125 @@ ${recommendations.map(plant => `🌱 **${plant.name}**
           </div>
         </div>
       </div>
+
+      {/* Footer */}
+      <footer className="bg-gray-900 text-gray-300 py-8 mt-12">
+        <div className="max-w-6xl mx-auto px-4">
+          <div className="grid md:grid-cols-3 gap-8">
+            {/* About */}
+            <div>
+              <div className="flex items-center space-x-2 mb-4">
+                <Leaf className="w-6 h-6 text-green-500" />
+                <h3 className="text-lg font-semibold text-white">HerboAI</h3>
+              </div>
+              <p className="text-sm text-gray-400 leading-relaxed">
+                Your AI-powered guide to AYUSH medicinal plants and traditional herbal remedies. 
+                Bridging ancient wisdom with modern technology.
+              </p>
+            </div>
+
+            {/* Important Links */}
+            <div>
+              <h4 className="text-sm font-semibold text-white mb-3">Important Information</h4>
+              <ul className="space-y-2 text-sm text-gray-400">
+                <li>• Consult healthcare professionals before use</li>
+                <li>• Traditional remedies for educational purposes</li>
+                <li>• Individual results may vary</li>
+                <li>• Not a substitute for medical advice</li>
+              </ul>
+            </div>
+
+            {/* Contact & Legal */}
+            <div>
+              <h4 className="text-sm font-semibold text-white mb-3">Legal & Support</h4>
+              <ul className="space-y-2 text-sm text-gray-400">
+                <li>Privacy Policy</li>
+                <li>Terms of Service</li>
+                <li>Contact Support</li>
+                <li>AYUSH Guidelines</li>
+              </ul>
+            </div>
+          </div>
+
+          <div className="border-t border-gray-800 mt-8 pt-6">
+            <div className="flex flex-col md:flex-row justify-between items-center space-y-4 md:space-y-0">
+              <div className="text-sm text-gray-500">
+                © 2025 HerboAI - Virtual Herbal Garden. All rights reserved.
+              </div>
+              <div className="flex items-center space-x-4 text-sm text-gray-500">
+                <span>🌿 Powered by AI & Traditional Wisdom</span>
+                <span>•</span>
+                <span>Made with 💚 for Better Health</span>
+              </div>
+            </div>
+            
+            <div className="mt-4 text-xs text-gray-600 text-center">
+              <p className="mb-2">
+                <strong>Disclaimer:</strong> The information provided by HerboAI is for educational and informational purposes only. 
+                It is not intended as medical advice and should not replace consultation with qualified healthcare professionals.
+              </p>
+              <p>
+                Always consult with a licensed healthcare provider before starting any herbal treatment, especially if you have 
+                existing medical conditions, are pregnant, nursing, or taking medications. Individual responses to herbs may vary.
+              </p>
+            </div>
+          </div>
+        </div>
+      </footer>
+
+      {/* Admin Login Modal */}
+      {showAdminLogin && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-8 max-w-md w-full mx-4 shadow-2xl">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center space-x-2">
+                <Settings className="w-6 h-6 text-indigo-600" />
+                <h2 className="text-xl font-bold text-gray-800">Admin Login</h2>
+              </div>
+              <button
+                onClick={() => setShowAdminLogin(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <form className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Username</label>
+                <input
+                  type="text"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  placeholder="Enter admin username"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
+                <input
+                  type="password"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  placeholder="Enter admin password"
+                />
+              </div>
+              <div className="flex space-x-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowAdminLogin(false)}
+                  className="flex-1 px-4 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 px-4 py-3 bg-gradient-to-r from-indigo-500 to-purple-500 text-white rounded-lg hover:from-indigo-600 hover:to-purple-600 transition-all duration-200"
+                >
+                  Login
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
