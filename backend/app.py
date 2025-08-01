@@ -3,6 +3,10 @@
 from flask import Flask
 from flask_restful import Api
 from flask_cors import CORS
+import os
+import sys
+# Add parent directory to Python path
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from database.db import init_db
 from backend.routes.plant_routes import PlantList, PlantSearch
 from backend.routes.admin_routes import PlantCreate, PlantEdit, PlantDelete

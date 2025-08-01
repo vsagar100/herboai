@@ -14,6 +14,7 @@ const HerboAI = () => {
   const [isTyping, setIsTyping] = useState(false);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const messagesEndRef = useRef(null);
+  const API_BASE_URL = "http://localhost:5000/api";
 
   const herbalDatabase = {
     ashwagandha: {
@@ -65,6 +66,38 @@ const HerboAI = () => {
       precautions: "Avoid during pregnancy, may lower blood sugar"
     }
   };
+
+  // Add this new function after the herbalDatabase and symptomToHerbs objects
+const callHerbalAPI = async (query) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/plants/search?q=${encodeURIComponent(query)}`);
+    if (!response.ok) {
+      throw new Error('API request failed');
+    }
+    const data = await response.json();
+    console.log('API response:', data);
+    
+    if (data.length === 0) {
+      return null; // No plants found
+    }
+
+    // Format the API response into a readable message
+    const formattedResponse = data.map(plant => `🌿 **${plant.name}**
+  **AYUSH System**: ${plant.ayush_system}
+
+  **Uses**: ${plant.uses.join(', ')}
+
+  **Traditional Remedies**:
+  ${plant.remedies.map(remedy => `• ${remedy}`).join('\n')}
+  `).join('\n\n');
+
+      return formattedResponse;
+    } catch (error) {
+      console.error('API Error:', error);
+      return null;
+    }
+  };
+
 
   const symptomToHerbs = {
     stress: ['ashwagandha', 'tulsi'],
@@ -148,6 +181,8 @@ ${recommendations.map(plant => `🌱 **${plant.name}**
     setInputMessage('');
     setIsTyping(true);
 
+    /* --- Disable simulation
+
     // Simulate AI thinking time
     setTimeout(() => {
       const botResponse = {
@@ -160,6 +195,35 @@ ${recommendations.map(plant => `🌱 **${plant.name}**
       setMessages(prev => [...prev, botResponse]);
       setIsTyping(false);
     }, 1500);
+    */
+
+    try {
+      // First try to get response from API
+      const apiResponse = await callHerbalAPI(inputMessage);
+      
+      const botResponse = {
+        id: Date.now() + 1,
+        type: 'bot',
+        content: apiResponse || generateBotResponse(inputMessage), // Fallback to local response if API returns null
+        timestamp: new Date()
+      };
+      console.log('API response:', apiResponse);
+
+      setMessages(prev => [...prev, botResponse]);
+    } catch (error) {
+      // If API fails, fallback to local response
+      console.log('API call failed, using local response:', error);
+      const botResponse = {
+        id: Date.now() + 1,
+        type: 'bot',
+        content: generateBotResponse(inputMessage),
+        timestamp: new Date()
+      };
+
+      setMessages(prev => [...prev, botResponse]);
+    } finally {
+      setIsTyping(false);
+    }
   };
 
   const handleKeyPress = (e) => {
