@@ -75,28 +75,32 @@ const callHerbalAPI = async (query) => {
       throw new Error('API request failed');
     }
     const data = await response.json();
-    console.log('API response:', data);
     
-    if (data.length === 0) {
-      return null; // No plants found
-    }
-
-    // Format the API response into a readable message
-    const formattedResponse = data.map(plant => `🌿 **${plant.name}**
-  **AYUSH System**: ${plant.ayush_system}
-
-  **Uses**: ${plant.uses.join(', ')}
-
-  **Traditional Remedies**:
-  ${plant.remedies.map(remedy => `• ${remedy}`).join('\n')}
-  `).join('\n\n');
-
-      return formattedResponse;
-    } catch (error) {
-      console.error('API Error:', error);
+    if (!data.plants || data.plants.length === 0) {
       return null;
     }
-  };
+
+    // Format the plants information
+    const plantsInfo = data.plants.map(plant => `
+🌿 **${plant.name}** (${plant.ayush_system})
+
+**Uses**: ${plant.uses.join(', ')}
+
+**Traditional Remedies**:
+${plant.remedies.map(remedy => `• ${remedy}`).join('\n')}
+
+**⚠️ Precautions**: ${plant.precautions}
+`).join('\n\n');
+
+    // Combine plants info with AI insights
+    const formattedResponse = `${plantsInfo}\n\n💡 **AI Insights**:\n${data.ai_insights}`;
+
+    return formattedResponse;
+  } catch (error) {
+    console.error('API Error:', error);
+    return null;
+  }
+};
 
 
   const symptomToHerbs = {

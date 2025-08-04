@@ -2,8 +2,8 @@
 
 from flask import request
 from flask_restful import Resource
-from backend.models.plant_model import Plant
-from database.db import db
+#from backend.models.plant_model import Plant
+from database.db import get_db
 
 class PlantCreate(Resource):
     def post(self):
