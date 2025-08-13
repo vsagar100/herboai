@@ -36,7 +36,6 @@ class PlantSearch(Resource):
         parser.add_argument('q', type=str, required=True, help='Search query is required')
         args = parser.parse_args()
         
-        # First, get plants from database
         db = get_db()
         cursor = db.cursor()
         search_query = f"%{args['q']}%"
@@ -51,17 +50,13 @@ class PlantSearch(Resource):
         plants = cursor.fetchall()
         
         if not plants:
-            # Use AI to provide a helpful response even when no plants are found
-            ai_prompt = f"""As a herbal medicine expert, provide a helpful response for the query: '{args['q']}'.
-            If you don't have specific plant recommendations, suggest general wellness advice or recommend consulting an Ayurvedic practitioner."""
-            
+            ai_prompt = f"As an Ayurvedic expert, what general advice would you give for someone asking about: '{args['q']}'?"
             ai_response = ai_service.generate_response(ai_prompt)
             return {
                 "message": f"No exact matches found for '{args['q']}'",
                 "ai_suggestion": ai_response
             }, 404
-            
-        # Enhance plant information with AI insights
+
         plant_list = [{
             "id": plant[0],
             "name": plant[1],
@@ -70,14 +65,15 @@ class PlantSearch(Resource):
             "remedies": plant[4].split(','),
             "precautions": plant[5]
         } for plant in plants]
-        
-        # Generate AI-enhanced insights
-        ai_prompt = f"""As an Ayurvedic expert, provide additional insights about these plants: {[p['name'] for p in plant_list]}.
-        Focus on traditional usage, combinations, and modern research if available. Keep it concise."""
-        
-        ai_insights = ai_service.generate_response(ai_prompt)
-        
+
+        # Get detailed AI insights for each plant
+        detailed_insights = []
+        for plant in plant_list:
+            plant_info = ai_service.generate_plant_info(plant['name'])
+            if plant_info:
+                detailed_insights.append(plant_info)
+
         return {
             "plants": plant_list,
-            "ai_insights": ai_insights
+            "detailed_insights": detailed_insights
         }, 200
