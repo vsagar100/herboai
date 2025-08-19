@@ -10,10 +10,12 @@ const HerboAI = () => {
       timestamp: new Date()
     }
   ]);
+  
   const [inputMessage, setInputMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const messagesEndRef = useRef(null);
+  const [error, setError] = useState("");
   const API_BASE_URL = "http://localhost:5000/api";
 
   const herbalDatabase = {
@@ -67,10 +69,99 @@ const HerboAI = () => {
     }
   };
 
-  // Add this new function after the herbalDatabase and symptomToHerbs objects
+// Replace the existing callHerbalAPI function with this:
+
+  // Replace the existing callHerbalAPI function with this:
 const callHerbalAPI = async (query) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/plants/search?q=${encodeURIComponent(query)}`);
+    console.log("Calling herbal API with query:", JSON.stringify({ query: inputMessage }));
+    const response = await fetch(`${API_BASE_URL}/search`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({ query: inputMessage }) // Use 'query' key to match Flask backend
+    });
+
+    if (!response.ok) {
+      throw new Error(`API request failed: ${response.status}`);
+    }
+
+    const data = await response.json();
+    
+    // Format the response based on the data structure from your backend
+    if (Array.isArray(data)) {
+      if (data.length === 0) {
+        return "🔍 No matching herbs found for your query. Try searching for:\n• Tulsi (Holy Basil)\n• Ashwagandha\n• Aloe Vera\n• Or describe your symptoms";
+      }
+      
+      const formattedResponse = data.map(herb => `
+🌿 **${herb.name}**
+
+**Uses**: ${herb.uses}
+
+${herb.common_names ? `**Common Names**: ${herb.common_names.join(', ')}\n` : ''}
+${herb.contraindications ? `\n**⚠️ Precautions**: ${herb.contraindications}` : ''}
+${herb.similarity_score ? `\n*Relevance: ${(herb.similarity_score * 100).toFixed(1)}%*` : ''}
+`).join('\n\n');
+
+      return formattedResponse;
+    }
+    
+    return "Unexpected response format from server.";
+  } catch (error) {
+    console.error("API Error:", error);
+    throw error;
+  }
+};
+
+const handleSend = async () => {
+  if (!inputMessage.trim() || isTyping) return;
+  setError("");
+  
+  const userMsg = { 
+    id: Date.now(), 
+    type: "user", 
+    content: inputMessage, 
+    timestamp: new Date() 
+  };
+  
+  setMessages((m) => [...m, userMsg]);
+  setInputMessage("");
+  setIsTyping(true);
+
+  try {
+    const response = await callHerbalAPI(userMsg.content);
+    const botMsg = {
+      id: Date.now() + 1,
+      type: "bot",
+      content: response,
+      timestamp: new Date()
+    };
+    setMessages((m) => [...m, botMsg]);
+  } catch (error) {
+    console.error("Error:", error);
+    setError("Failed to get response from server. Using local database.");
+    // Fallback to local response
+    const botMsg = {
+      id: Date.now() + 1,
+      type: "bot",
+      content: generateBotResponse(userMsg.content),
+      timestamp: new Date()
+    };
+    setMessages((m) => [...m, botMsg]);
+  } finally {
+    setIsTyping(false);
+  }
+};
+
+  // Add this new function after the herbalDatabase and symptomToHerbs objects
+const callHerbalAPI1 = async (query) => {
+  try {
+    const url = `${API_BASE_URL}/search?q=${encodeURIComponent(query)}`;
+    const response = await fetch(url, { headers: { "Content-Type": "application/json" } });
+
     if (!response.ok) {
       throw new Error('API request failed');
     }
@@ -237,6 +328,13 @@ ${recommendations.map(plant => `🌱 **${plant.name}**
     }
   };
 
+   const onKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
   const quickActions = [
     { text: "Stress relief herbs", icon: <Heart className="w-4 h-4" /> },
     { text: "Immunity boosters", icon: <Shield className="w-4 h-4" /> },
@@ -372,12 +470,14 @@ ${recommendations.map(plant => `🌱 **${plant.name}**
 
               {/* Input Area */}
               <div className="border-t border-green-100 p-4 bg-white/50">
+              {error && <div className="mb-2 text-sm text-amber-700">⚠️ {error}</div>}
                 <div className="flex space-x-3">
                   <div className="flex-1 relative">
                     <textarea
                       value={inputMessage}
                       onChange={(e) => setInputMessage(e.target.value)}
-                      onKeyPress={handleKeyPress}
+                      //onKeyPress={handleKeyPress}
+                      onKeyDown={onKeyDown}
                       placeholder="Ask about medicinal plants, symptoms, or AYUSH remedies..."
                       className="w-full px-4 py-3 pr-12 border border-green-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent resize-none bg-white/70 backdrop-blur-sm"
                       rows="2"

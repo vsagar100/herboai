@@ -1,12 +1,17 @@
-Flask==2.3.2
-Flask-RESTful==0.3.9
-Flask-Cors==4.0.0
-SQLAlchemy==2.0.19
-marshmallow==3.19.0
-marshmallow-sqlalchemy==0.29.0
-routes==2.4.1
-
-# Optional - for future LLM integration
-openai==1.11.0
-sentence-transformers==2.2.2
-chromadb==0.4.24
+# requirements.txt for HerboAI
+pip>=24.0
+setuptools>=65.5.0
+wheel>=0.42.0
+numpy==1.26.4 --only-binary=:all:
+pandas==2.2.2 --only-binary=:all:
+scipy==1.13.1 --only-binary=:all:
+flask==3.0.3
+spacy==3.7.4
+transformers==4.43.4
+sentence-transformers==2.7.0
+fpdf2==2.7.9
+torch==2.3.1
+sentencepiece==0.2.0 
+sacremoses==0.1.1
+### INSTALL MANUALLY ###
+#pip install vosk==0.3.45 --no-deps

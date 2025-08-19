@@ -1,0 +1,109 @@
+[
+  {
+    "id": 1,
+    "name": "Tulsi",
+    "scientific_name": "Ocimum tenuiflorum",
+    "common_names": ["Holy Basil", "Sacred Basil"],
+    "ayush_system": "Ayurveda",
+    "uses": "Boosts immunity, relieves cold and cough, improves respiratory health.",
+    "remedies": [
+      {
+        "condition": "Cold & Cough",
+        "preparation": "Boil 5-6 leaves in 200ml water, drink twice daily.",
+        "form": "Decoction"
+      },
+      {
+        "condition": "Stress Relief",
+        "preparation": "Chew 4 fresh leaves daily in the morning.",
+        "form": "Raw"
+      }
+    ],
+    "parts_used": ["Leaves"],
+    "phytochemicals": ["Eugenol", "Ursolic Acid", "Rosmarinic Acid"],
+    "contraindications": "Avoid during pregnancy without medical advice.",
+    "languages": {
+      "hi": "तुलसी",
+      "mr": "तुळस",
+      "en": "Holy Basil"
+    }
+  },
+  {
+    "id": 2,
+    "name": "Aloe Vera",
+    "scientific_name": "Aloe barbadensis miller",
+    "common_names": ["Gwar Patha"],
+    "ayush_system": "Yoga & Naturopathy",
+    "uses": "Soothes skin burns, improves digestion, supports liver health.",
+    "remedies": [
+      {
+        "condition": "Skin Burns",
+        "preparation": "Apply fresh gel from leaf directly to the burn area.",
+        "form": "Gel"
+      },
+      {
+        "condition": "Constipation",
+        "preparation": "Consume 20ml aloe juice on empty stomach.",
+        "form": "Juice"
+      }
+    ],
+    "parts_used": ["Leaves (Gel)"],
+    "phytochemicals": ["Aloin", "Aloe-emodin", "Polysaccharides"],
+    "contraindications": "Avoid excess consumption during pregnancy.",
+    "languages": {
+      "hi": "घृतकुमारी",
+      "mr": "कोरफड",
+      "en": "Aloe Vera"
+    }
+  },
+  {
+    "id": 3,
+    "name": "Asgandh",
+    "scientific_name": "Withania somnifera",
+    "common_names": ["Ashwagandha", "Indian Ginseng"],
+    "ayush_system": "Unani",
+    "uses": "Boosts stamina, reduces stress, enhances male fertility.",
+    "remedies": [
+      {
+        "condition": "Fatigue",
+        "preparation": "Mix 5g powder with warm milk at night.",
+        "form": "Powder"
+      },
+      {
+        "condition": "Stress",
+        "preparation": "Boil root in milk, drink before bed.",
+        "form": "Decoction"
+      }
+    ],
+    "parts_used": ["Root", "Leaves"],
+    "phytochemicals": ["Withanolides", "Alkaloids", "Saponins"],
+    "contraindications": "Avoid in hyperthyroidism without doctor’s advice.",
+    "languages": {
+      "hi": "अश्वगंधा",
+      "mr": "अश्वगंधा",
+      "en": "Ashwagandha"
+    }
+  },
+  {
+    "id": 4,
+    "name": "Arsenicum Album 30",
+    "scientific_name": "Arsenic trioxide (Homeopathic dilution)",
+    "common_names": ["Arsenic Alb"],
+    "ayush_system": "Homeopathy",
+    "uses": "Boosts immunity, prevents recurrent colds.",
+    "remedies": [
+      {
+        "condition": "Recurrent Cold",
+        "preparation": "3-4 pills under the tongue every morning for 3 days.",
+        "form": "Pills"
+      }
+    ],
+    "parts_used": ["N/A (Homeopathic dilution)"],
+    "phytochemicals": ["None (Homeopathic preparation)"],
+    "contraindications": "Avoid self-medication without doctor’s advice.",
+    "languages": {
+      "hi": "आर्सेनिकम एल्बम",
+      "mr": "आर्सेनिक अल्बम",
+      "en": "Arsenicum Album"
+    }
+  }
+]

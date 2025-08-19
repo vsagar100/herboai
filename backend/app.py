@@ -1,25 +1,24 @@
 from flask import Flask
-from flask_restful import Api
+from flask import Blueprint
 from flask_cors import CORS
-import os
-import sys
-
-# Add parent directory to Python path
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-
-from database.db import init_db
-from routes.plant_routes import PlantList, PlantSearch
+from routes.herbs import herbs_bp
+from routes.search import search_bp
 
 app = Flask(__name__)
-CORS(app)
-api = Api(app)
+#search_bp = Blueprint("search", __name__)
+CORS(app)  # Allow frontend to connect
+#CORS(app, resources={r"/*": {"origins": ["http://localhost:5173"]}})
 
-# Database setup
-init_db(app)
-
-# Routes
-api.add_resource(PlantList, "/api/plants")
-api.add_resource(PlantSearch, "/api/plants/search")
+# Register routes
+#app.register_blueprint(herbs_bp, url_prefix="/api/herbs")
+app.register_blueprint(search_bp, url_prefix="/api")
 
 if __name__ == "__main__":
+
+    print("\n=== Registered Routes ===")
+    for rule in app.url_map.iter_rules():
+        print(f"{rule} -> {rule.endpoint}")
+    print("=========================\n")
+
     app.run(debug=True)
+    #app.run(host="localhost", port=5000, debug=True)
