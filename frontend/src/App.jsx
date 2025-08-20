@@ -70,51 +70,50 @@ const HerboAI = () => {
   };
 
 // Replace the existing callHerbalAPI function with this:
-
-  // Replace the existing callHerbalAPI function with this:
 const callHerbalAPI = async (query) => {
   try {
-    console.log("Calling herbal API with query:", JSON.stringify({ query: inputMessage }));
-    const response = await fetch(`${API_BASE_URL}/search`, {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify({ query: inputMessage }) // Use 'query' key to match Flask backend
+    const response = await fetch(`${API_BASE_URL}/query`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query })
     });
 
     if (!response.ok) {
-      throw new Error(`API request failed: ${response.status}`);
+      throw new Error("API request failed");
     }
-
     const data = await response.json();
-    
-    // Format the response based on the data structure from your backend
-    if (Array.isArray(data)) {
-      if (data.length === 0) {
-        return "🔍 No matching herbs found for your query. Try searching for:\n• Tulsi (Holy Basil)\n• Ashwagandha\n• Aloe Vera\n• Or describe your symptoms";
-      }
-      
-      const formattedResponse = data.map(herb => `
-🌿 **${herb.name}**
 
-**Uses**: ${herb.uses}
-
-${herb.common_names ? `**Common Names**: ${herb.common_names.join(', ')}\n` : ''}
-${herb.contraindications ? `\n**⚠️ Precautions**: ${herb.contraindications}` : ''}
-${herb.similarity_score ? `\n*Relevance: ${(herb.similarity_score * 100).toFixed(1)}%*` : ''}
-`).join('\n\n');
-
-      return formattedResponse;
+    if (!data.results || data.results.length === 0) {
+      return null;
     }
-    
-    return "Unexpected response format from server.";
+    console.log("API Response:", data.results);
+
+
+    const plantsInfo = data.results.map(plant => `
+🌿 **${plant.herb.name}** (${plant.herb.ayush_system})
+
+**Uses**: ${plant.herb.uses?.join(', ') || "N/A"}
+
+**Remedies**:
+${(plant.herb.remedies || []).map(r => `• ${r}`).join("\n")}
+
+**Therapies**: ${(plant.herb.therapies || []).map(r => `• ${r}`).join("\n")}
+
+**Related Conditions**: ${(plant.herb.related_conditions || []).join(", ")}
+
+**⚠️ Precautions**: ${plant.herb.precautions || "N/A"}
+
+(Similarity: ${(plant.herb.similarity*100).toFixed(1)}%)
+`).join("\n\n");
+
+    return plantsInfo;
+
   } catch (error) {
     console.error("API Error:", error);
-    throw error;
+    return null;
   }
 };
+
 
 const handleSend = async () => {
   if (!inputMessage.trim() || isTyping) return;

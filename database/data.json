@@ -57,10 +57,10 @@
   },
   {
     "id": 3,
-    "name": "Asgandh",
+    "name": "Ashwagandha",
     "scientific_name": "Withania somnifera",
-    "common_names": ["Ashwagandha", "Indian Ginseng"],
-    "ayush_system": "Unani",
+    "common_names": ["Indian Ginseng", "Asgandh"],
+    "ayush_system": "Ayurveda",
     "uses": "Boosts stamina, reduces stress, enhances male fertility.",
     "remedies": [
       {
@@ -104,6 +104,144 @@
       "hi": "आर्सेनिकम एल्बम",
       "mr": "आर्सेनिक अल्बम",
       "en": "Arsenicum Album"
+    }
+  },
+  {
+    "id": 5,
+    "name": "Nilavembu Kudineer",
+    "scientific_name": "Andrographis paniculata formulation",
+    "common_names": ["Kalmegh Decoction"],
+    "ayush_system": "Siddha",
+    "uses": "Effective in fever management, viral infections, and detoxification.",
+    "remedies": [
+      {
+        "condition": "Fever",
+        "preparation": "Boil 5g powder in 200ml water until reduced to 50ml; drink warm.",
+        "form": "Decoction"
+      }
+    ],
+    "parts_used": ["Whole Plant"],
+    "phytochemicals": ["Andrographolide", "Flavonoids"],
+    "contraindications": "Avoid in pregnancy; consult physician before use.",
+    "languages": {
+      "hi": "कालमेघ काढ़ा",
+      "mr": "कालमेघ काढा",
+      "en": "Nilavembu Kudineer"
+    }
+  },
+  {
+    "id": 6,
+    "name": "Triphala",
+    "scientific_name": "Emblica officinalis + Terminalia chebula + Terminalia bellirica",
+    "common_names": ["Three Myrobalans"],
+    "ayush_system": "Ayurveda",
+    "uses": "Improves digestion, detoxifies body, enhances vision.",
+    "remedies": [
+      {
+        "condition": "Constipation",
+        "preparation": "Take 1 tsp powder with warm water before bed.",
+        "form": "Powder"
+      }
+    ],
+    "parts_used": ["Fruits"],
+    "phytochemicals": ["Tannins", "Gallic Acid", "Ellagic Acid"],
+    "contraindications": "Avoid in diarrhea or pregnancy.",
+    "languages": {
+      "hi": "त्रिफला",
+      "mr": "त्रिफळा",
+      "en": "Triphala"
+    }
+  },
+  {
+    "id": 7,
+    "name": "Unani Joshanda",
+    "scientific_name": "Herbal decoction (Adhatoda, Glycyrrhiza, etc.)",
+    "common_names": ["Joshanda"],
+    "ayush_system": "Unani",
+    "uses": "Treats cough, cold, bronchitis, sore throat.",
+    "remedies": [
+      {
+        "condition": "Cough & Cold",
+        "preparation": "Boil sachet contents in 250ml water, drink warm.",
+        "form": "Decoction"
+      }
+    ],
+    "parts_used": ["Leaves, Roots (various herbs)"],
+    "phytochemicals": ["Alkaloids", "Saponins", "Glycyrrhizin"],
+    "contraindications": "Not for children below 5 years without doctor’s advice.",
+    "languages": {
+      "hi": "जोषांदा",
+      "mr": "जोषांदा",
+      "en": "Joshanda"
+    }
+  },
+  {
+    "id": 8,
+    "name": "Brahmi",
+    "scientific_name": "Bacopa monnieri",
+    "common_names": ["Water Hyssop"],
+    "ayush_system": "Ayurveda",
+    "uses": "Improves memory, reduces anxiety, supports brain health.",
+    "remedies": [
+      {
+        "condition": "Memory Loss",
+        "preparation": "Consume 2-3g powder with ghee daily.",
+        "form": "Powder"
+      }
+    ],
+    "parts_used": ["Leaves", "Stems"],
+    "phytochemicals": ["Bacosides", "Alkaloids", "Saponins"],
+    "contraindications": "Avoid with sedatives; may cause stomach upset.",
+    "languages": {
+      "hi": "ब्राह्मी",
+      "mr": "ब्राह्मी",
+      "en": "Brahmi"
+    }
+  },
+  {
+    "id": 9,
+    "name": "Nux Vomica",
+    "scientific_name": "Strychnos nux-vomica (Homeopathic dilution)",
+    "common_names": ["Nux"],
+    "ayush_system": "Homeopathy",
+    "uses": "Treats indigestion, irritability, hangover symptoms.",
+    "remedies": [
+      {
+        "condition": "Indigestion",
+        "preparation": "Take 3-4 pills under the tongue twice daily.",
+        "form": "Pills"
+      }
+    ],
+    "parts_used": ["N/A (Homeopathic dilution)"],
+    "phytochemicals": ["None (Homeopathic preparation)"],
+    "contraindications": "Strictly use in diluted form; toxic in raw form.",
+    "languages": {
+      "hi": "नक्स वोमिका",
+      "mr": "नक्स वोमिका",
+      "en": "Nux Vomica"
+    }
+  },
+  {
+    "id": 10,
+    "name": "Siddha Chukku Thippili",
+    "scientific_name": "Dry Ginger + Long Pepper formulation",
+    "common_names": ["Sukku Milagu Thippili"],
+    "ayush_system": "Siddha",
+    "uses": "Effective for cough, cold, digestive disorders.",
+    "remedies": [
+      {
+        "condition": "Cough",
+        "preparation": "Mix 2g powder with honey twice daily.",
+        "form": "Powder"
+      }
+    ],
+    "parts_used": ["Roots, Fruits"],
+    "phytochemicals": ["Gingerols", "Piperine"],
+    "contraindications": "Avoid in ulcers or gastritis.",
+    "languages": {
+      "hi": "चुक्कु तिप्पिली",
+      "mr": "चुक्कु तिप्पीली",
+      "en": "Chukku Thippili"
     }
   }
 ]
