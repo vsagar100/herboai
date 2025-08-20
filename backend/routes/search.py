@@ -1,21 +1,29 @@
 import json
 import os
+import sys
 from flask import Blueprint, request, jsonify
 from sentence_transformers import SentenceTransformer, util
 import torch
 from sklearn.feature_extraction.text import TfidfVectorizer
 import numpy as np
+#sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+#import database.db
+from database.db import HerbalDataFetcher
 
 # Main API Blueprint - Single entry point for frontend
 search_bp = Blueprint("api", __name__)
 
 # Load model and data
 model = SentenceTransformer("sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
-DATA_FILE = os.path.join(os.path.dirname(__file__), "../../database/data.json")
 
-with open(DATA_FILE, "r", encoding="utf-8") as f:
-    herbs_data = json.load(f)
+#DATA_FILE = os.path.join(os.path.dirname(__file__), "../../database/data.json")
+# with open(DATA_FILE, "r", encoding="utf-8") as f:
+#     HERB_DATA = json.load(f)
 
+DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'database\\herboai.db')
+print(f"Using database at: {DB_PATH}")
+fetcher = HerbalDataFetcher(DB_PATH)
+HERB_DATA = fetcher.fetch_all_herbs()
 
 class RequestAnalyzer:
     """Analyzes incoming requests to determine the best response strategy"""
@@ -63,9 +71,9 @@ class RequestAnalyzer:
 
     @staticmethod
     def _is_search_request(query):
-        herb_names = [herb.get("name", "").lower() for herb in herbs_data]
+        herb_names = [herb.get("name", "").lower() for herb in HERB_DATA]
         alt_names = []
-        for herb in herbs_data:
+        for herb in HERB_DATA:
             alt_names.extend(herb.get("common_names", []))
             if "languages" in herb:
                 alt_names.extend(list(herb["languages"].values()))
@@ -81,7 +89,7 @@ class RequestAnalyzer:
         query_lower = query.lower()
         word_count = len(query.split())
 
-        herb_names = [herb.get("name", "").lower() for herb in herbs_data]
+        herb_names = [herb.get("name", "").lower() for herb in HERB_DATA]
         if query_lower in herb_names:
             return "exact_match"
 
@@ -113,8 +121,8 @@ class RequestAnalyzer:
 
 
 class IntelligentHerbalSearch:
-    def __init__(self, herbs_data, model):
-        self.herbs_data = herbs_data
+    def __init__(self, HERB_DATA, model):
+        self.HERB_DATA = HERB_DATA
         self.model = model
         self.prepare_search_data()
 
@@ -124,7 +132,7 @@ class IntelligentHerbalSearch:
         self.semantic_texts = []
         self.keyword_texts = []
 
-        for i, herb in enumerate(self.herbs_data):
+        for i, herb in enumerate(self.HERB_DATA):
             herb_name = herb.get("name", "").lower().strip()
             self.name_index[herb_name] = i
 
@@ -183,11 +191,11 @@ class IntelligentHerbalSearch:
         q = query.lower().strip()
         results = []
         if q in self.name_index:
-            results.append({"herb": self.herbs_data[self.name_index[q]], "score": 1.0, "match_type": "exact_name"})
+            results.append({"herb": self.HERB_DATA[self.name_index[q]], "score": 1.0, "match_type": "exact_name"})
         if q in self.alt_name_index:
             idx = self.alt_name_index[q]
-            if not any(r["herb"]["name"] == self.herbs_data[idx]["name"] for r in results):
-                results.append({"herb": self.herbs_data[idx], "score": 0.95, "match_type": "alt_name"})
+            if not any(r["herb"]["name"] == self.HERB_DATA[idx]["name"] for r in results):
+                results.append({"herb": self.HERB_DATA[idx], "score": 0.95, "match_type": "alt_name"})
         return results
 
     def _single_term_search(self, query):
@@ -201,7 +209,7 @@ class IntelligentHerbalSearch:
 
         if not exact_results:
             q = query.lower()
-            for herb in self.herbs_data:
+            for herb in self.HERB_DATA:
                 if herb["name"] in seen:
                     continue
                 if q in herb.get("name", "").lower():
@@ -225,7 +233,7 @@ class IntelligentHerbalSearch:
         results = []
         for i, score in enumerate(scores):
             if float(score) >= 0.25:
-                results.append({"herb": self.herbs_data[i], "score": float(score), "match_type": "semantic"})
+                results.append({"herb": self.HERB_DATA[i], "score": float(score), "match_type": "semantic"})
         return sorted(results, key=lambda x: x["score"], reverse=True)[:5]
 
     def _hybrid_search(self, query):
@@ -249,7 +257,7 @@ class IntelligentHerbalSearch:
             return []
         q = partial_query.lower()
         suggestions = []
-        for herb in self.herbs_data:
+        for herb in self.HERB_DATA:
             if q in herb.get("name", "").lower():
                 suggestions.append({"text": herb["name"], "type": "herb_name"})
             alt_names = herb.get("common_names", [])
@@ -270,7 +278,7 @@ class IntelligentHerbalSearch:
 
 
 print("Initializing AYUSH Herbal Search System...")
-search_system = IntelligentHerbalSearch(herbs_data, model)
+search_system = IntelligentHerbalSearch(HERB_DATA, model)
 print("Search system ready!")
 
 
@@ -302,7 +310,7 @@ def handle_query():
 
 @search_bp.route("/health", methods=["GET"])
 def health_check():
-    return jsonify({"status": "healthy", "model": "paraphrase-multilingual-mpnet-base-v2", "total_herbs": len(herbs_data)})
+    return jsonify({"status": "healthy", "model": "paraphrase-multilingual-mpnet-base-v2", "total_herbs": len(HERB_DATA)})
 
 
 @search_bp.route("/search", methods=["POST"])
