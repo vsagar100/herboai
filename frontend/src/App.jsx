@@ -92,18 +92,19 @@ const callHerbalAPI = async (query) => {
     const plantsInfo = data.results.map(plant => `
 🌿 **${plant.herb.name}** (${plant.herb.ayush_system})
 
-**Uses**: ${plant.herb.uses?.join(', ') || "N/A"}
+**Scientific Name**: ${plant.herb.scientific_name || "N/A"}
+
+**Uses**: ${plant.herb.uses || "N/A"}
+
+**Parts Used**: ${plant.herb.parts_used || "N/A"}
 
 **Remedies**:
-${(plant.herb.remedies || []).map(r => `• ${r}`).join("\n")}
-
-**Therapies**: ${(plant.herb.therapies || []).map(r => `• ${r}`).join("\n")}
+${(plant.herb.remedies || []).map(r => `• ${r.condition}: ${r.preparation}`).join("\n")}
 
 **Related Conditions**: ${(plant.herb.related_conditions || []).join(", ")}
 
-**⚠️ Precautions**: ${plant.herb.precautions || "N/A"}
+**⚠️ Precautions**: ${plant.herb.precautions || plant.herb.contraindications || "N/A"}
 
-(Similarity: ${(plant.herb.similarity*100).toFixed(1)}%)
 `).join("\n\n");
 
     return plantsInfo;
