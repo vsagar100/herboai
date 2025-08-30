@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Leaf, User, Bot, Search, Sparkles, Heart, Shield, Zap, Wind, LogIn, Settings } from 'lucide-react';
+import AdminDashboard from './AdminDashboard';
 
 const HerboAI = () => {
+  // Move ALL state declarations to the top, before any conditional logic
   const [messages, setMessages] = useState([
     {
       id: 1,
@@ -12,12 +14,23 @@ const HerboAI = () => {
   ]);
   
   const [inputMessage, setInputMessage] = useState('');
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const messagesEndRef = useRef(null);
   const [error, setError] = useState("");
+  const [loginError, setLoginError] = useState("");
+  
   const API_BASE_URL = "http://localhost:5000/api";
 
+  // All useEffect hooks must also be declared before any conditional returns
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  // Define all functions before conditional logic
   const herbalDatabase = {
     ashwagandha: {
       name: "Ashwagandha",
@@ -69,27 +82,25 @@ const HerboAI = () => {
     }
   };
 
-// Replace the existing callHerbalAPI function with this:
-const callHerbalAPI = async (query) => {
-  try {
-    const response = await fetch(`${API_BASE_URL}/query`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query })
-    });
+  const callHerbalAPI = async (query) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/query`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query })
+      });
 
-    if (!response.ok) {
-      throw new Error("API request failed");
-    }
-    const data = await response.json();
+      if (!response.ok) {
+        throw new Error("API request failed");
+      }
+      const data = await response.json();
 
-    if (!data.results || data.results.length === 0) {
-      return null;
-    }
-    console.log("API Response:", data.results);
+      if (!data.results || data.results.length === 0) {
+        return null;
+      }
+      console.log("API Response:", data.results);
 
-
-    const plantsInfo = data.results.map(plant => `
+      const plantsInfo = data.results.map(plant => `
 🌿 **${plant.herb.name}** (${plant.herb.ayush_system})
 
 **Scientific Name**: ${plant.herb.scientific_name || "N/A"}
@@ -107,92 +118,67 @@ ${(plant.herb.remedies || []).map(r => `• ${r.condition}: ${r.preparation}`).j
 
 `).join("\n\n");
 
-    return plantsInfo;
+      return plantsInfo;
 
-  } catch (error) {
-    console.error("API Error:", error);
-    return null;
-  }
-};
-
-
-const handleSend = async () => {
-  if (!inputMessage.trim() || isTyping) return;
-  setError("");
-  
-  const userMsg = { 
-    id: Date.now(), 
-    type: "user", 
-    content: inputMessage, 
-    timestamp: new Date() 
-  };
-  
-  setMessages((m) => [...m, userMsg]);
-  setInputMessage("");
-  setIsTyping(true);
-
-  try {
-    const response = await callHerbalAPI(userMsg.content);
-    const botMsg = {
-      id: Date.now() + 1,
-      type: "bot",
-      content: response,
-      timestamp: new Date()
-    };
-    setMessages((m) => [...m, botMsg]);
-  } catch (error) {
-    console.error("Error:", error);
-    setError("Failed to get response from server. Using local database.");
-    // Fallback to local response
-    const botMsg = {
-      id: Date.now() + 1,
-      type: "bot",
-      content: generateBotResponse(userMsg.content),
-      timestamp: new Date()
-    };
-    setMessages((m) => [...m, botMsg]);
-  } finally {
-    setIsTyping(false);
-  }
-};
-
-  // Add this new function after the herbalDatabase and symptomToHerbs objects
-const callHerbalAPI1 = async (query) => {
-  try {
-    const url = `${API_BASE_URL}/search?q=${encodeURIComponent(query)}`;
-    const response = await fetch(url, { headers: { "Content-Type": "application/json" } });
-
-    if (!response.ok) {
-      throw new Error('API request failed');
-    }
-    const data = await response.json();
-    
-    if (!data.plants || data.plants.length === 0) {
+    } catch (error) {
+      console.error("API Error:", error);
       return null;
     }
+  };
 
-    // Format the plants information
-    const plantsInfo = data.plants.map(plant => `
-🌿 **${plant.name}** (${plant.ayush_system})
+  const handleSend = async () => {
+    if (!inputMessage.trim() || isTyping) return;
+    setError("");
+    
+    const userMsg = { 
+      id: Date.now(), 
+      type: "user", 
+      content: inputMessage, 
+      timestamp: new Date() 
+    };
+    
+    setMessages((m) => [...m, userMsg]);
+    setInputMessage("");
+    setIsTyping(true);
 
-**Uses**: ${plant.uses.join(', ')}
+    try {
+      const response = await callHerbalAPI(userMsg.content);
+      const botMsg = {
+        id: Date.now() + 1,
+        type: "bot",
+        content: response,
+        timestamp: new Date()
+      };
+      setMessages((m) => [...m, botMsg]);
+    } catch (error) {
+      console.error("Error:", error);
+      setError("Failed to get response from server. Using local database.");
+      const botMsg = {
+        id: Date.now() + 1,
+        type: "bot",
+        content: generateBotResponse(userMsg.content),
+        timestamp: new Date()
+      };
+      setMessages((m) => [...m, botMsg]);
+    } finally {
+      setIsTyping(false);
+    }
+  };
 
-**Traditional Remedies**:
-${plant.remedies.map(remedy => `• ${remedy}`).join('\n')}
+  const handleAdminLogin = (e) => {
+    e.preventDefault();
+    if (loginUsername === "admin" && loginPassword === "admin123") {
+      setIsAdmin(true);
+      setShowAdminLogin(false);
+      setLoginError("");
+    } else {
+      setLoginError("Invalid credentials. Try again.");
+    }
+  };
 
-**⚠️ Precautions**: ${plant.precautions}
-`).join('\n\n');
-
-    // Combine plants info with AI insights
-    const formattedResponse = `${plantsInfo}\n\n💡 **AI Insights**:\n${data.ai_insights}`;
-
-    return formattedResponse;
-  } catch (error) {
-    console.error('API Error:', error);
-    return null;
-  }
-};
-
+  const handleAdminLogout = () => {
+    setIsAdmin(false);
+  };
 
   const symptomToHerbs = {
     stress: ['ashwagandha', 'tulsi'],
@@ -210,10 +196,6 @@ ${plant.remedies.map(remedy => `• ${remedy}`).join('\n')}
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
 
   const generateBotResponse = (userMessage) => {
     const lowerMessage = userMessage.toLowerCase();
@@ -276,42 +258,24 @@ ${recommendations.map(plant => `🌱 **${plant.name}**
     setInputMessage('');
     setIsTyping(true);
 
-    /* --- Disable simulation
-
-    // Simulate AI thinking time
-    setTimeout(() => {
-      const botResponse = {
-        id: Date.now() + 1,
-        type: 'bot',
-        content: generateBotResponse(inputMessage),
-        timestamp: new Date()
-      };
-
-      setMessages(prev => [...prev, botResponse]);
-      setIsTyping(false);
-    }, 1500);
-    */
-
     try {
-      // First try to get response from API
       const apiResponse = await callHerbalAPI(inputMessage);
       
       const botResponse = {
         id: Date.now() + 1,
         type: 'bot',
-        content: apiResponse || generateBotResponse(inputMessage), // Fallback to local response if API returns null
+        content: apiResponse,
         timestamp: new Date()
       };
       console.log('API response:', apiResponse);
 
       setMessages(prev => [...prev, botResponse]);
     } catch (error) {
-      // If API fails, fallback to local response
       console.log('API call failed, using local response:', error);
       const botResponse = {
         id: Date.now() + 1,
         type: 'bot',
-        content: generateBotResponse(inputMessage),
+        content: "Error fetching data from server.",
         timestamp: new Date()
       };
 
@@ -328,7 +292,7 @@ ${recommendations.map(plant => `🌱 **${plant.name}**
     }
   };
 
-   const onKeyDown = (e) => {
+  const onKeyDown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -341,6 +305,11 @@ ${recommendations.map(plant => `🌱 **${plant.name}**
     { text: "Energy enhancers", icon: <Zap className="w-4 h-4" /> },
     { text: "Respiratory health", icon: <Wind className="w-4 h-4" /> }
   ];
+
+  // NOW the conditional render comes AFTER all hooks are declared
+  if (isAdmin) {
+    return <AdminDashboard onLogout={handleAdminLogout} />;
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50">
@@ -470,13 +439,12 @@ ${recommendations.map(plant => `🌱 **${plant.name}**
 
               {/* Input Area */}
               <div className="border-t border-green-100 p-4 bg-white/50">
-              {error && <div className="mb-2 text-sm text-amber-700">⚠️ {error}</div>}
+                {error && <div className="mb-2 text-sm text-amber-700">⚠️ {error}</div>}
                 <div className="flex space-x-3">
                   <div className="flex-1 relative">
                     <textarea
                       value={inputMessage}
                       onChange={(e) => setInputMessage(e.target.value)}
-                      //onKeyPress={handleKeyPress}
                       onKeyDown={onKeyDown}
                       placeholder="Ask about medicinal plants, symptoms, or AYUSH remedies..."
                       className="w-full px-4 py-3 pr-12 border border-green-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent resize-none bg-white/70 backdrop-blur-sm"
@@ -580,27 +548,44 @@ ${recommendations.map(plant => `🌱 **${plant.name}**
               </button>
             </div>
             
-            <form className="space-y-4">
+            {loginError && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-sm text-red-600">{loginError}</p>
+              </div>
+            )}
+            
+            <form className="space-y-4" onSubmit={handleAdminLogin}>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Username</label>
                 <input
                   type="text"
+                  name="username"
+                  value={loginUsername}
+                  onChange={(e) => setLoginUsername(e.target.value)}
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                   placeholder="Enter admin username"
+                  required
                 />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
                 <input
                   type="password"
+                  name="password"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                   placeholder="Enter admin password"
+                  required
                 />
               </div>
               <div className="flex space-x-3 pt-4">
                 <button
                   type="button"
-                  onClick={() => setShowAdminLogin(false)}
+                  onClick={() => {
+                    setShowAdminLogin(false);
+                    setLoginError("");
+                  }}
                   className="flex-1 px-4 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
                 >
                   Cancel
