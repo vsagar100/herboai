@@ -10,7 +10,7 @@ CORS(app)  # Allow frontend to connect
 #CORS(app, resources={r"/*": {"origins": ["http://localhost:5173"]}})
 
 # Register routes
-#app.register_blueprint(herbs_bp, url_prefix="/api/herbs")
+app.register_blueprint(herbs_bp, url_prefix="/api")
 app.register_blueprint(search_bp, url_prefix="/api")
 
 if __name__ == "__main__":

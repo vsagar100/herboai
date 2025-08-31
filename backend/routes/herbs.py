@@ -1,5 +1,6 @@
 from flask import Blueprint, jsonify, request
 import sqlite3
+from database.db_utils import fetch_all_herbs
 
 herbs_bp = Blueprint("herbs", __name__)
 
@@ -8,10 +9,9 @@ def get_db():
     conn.row_factory = sqlite3.Row
     return conn
 
-@herbs_bp.route("/", methods=["GET"])
+@herbs_bp.route("/herbs", methods=["GET"])
 def list_herbs():
-    conn = get_db()
-    herbs = conn.execute("SELECT * FROM herbs").fetchall()
+    herbs = fetch_all_herbs()
     return jsonify([dict(row) for row in herbs])
 
 @herbs_bp.route("/", methods=["POST"])

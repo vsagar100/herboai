@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Leaf, User, Bot, Search, Sparkles, Heart, Shield, Zap, Wind, LogIn, Settings } from 'lucide-react';
 import AdminDashboard from './AdminDashboard';
+import { CONFIG } from './config';
 
 const HerboAI = () => {
   // Move ALL state declarations to the top, before any conditional logic
@@ -23,68 +24,16 @@ const HerboAI = () => {
   const [error, setError] = useState("");
   const [loginError, setLoginError] = useState("");
   
-  const API_BASE_URL = "http://localhost:5000/api";
+  //const API_BASE_URL = "http://localhost:5000/api";
 
   // All useEffect hooks must also be declared before any conditional returns
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
 
-  // Define all functions before conditional logic
-  const herbalDatabase = {
-    ashwagandha: {
-      name: "Ashwagandha",
-      scientificName: "Withania somnifera",
-      system: "Ayurveda",
-      benefits: ["Stress relief", "Immunity booster", "Energy enhancement", "Sleep quality"],
-      remedies: [
-        "Mix 1 tsp Ashwagandha powder with warm milk before bed",
-        "Take 300-500mg standardized extract twice daily",
-        "Prepare Ashwagandha tea with honey for daily consumption"
-      ],
-      precautions: "Consult healthcare provider if pregnant or on medications"
-    },
-    tulsi: {
-      name: "Tulsi (Holy Basil)",
-      scientificName: "Ocimum tenuiflorum",
-      system: "Ayurveda",
-      benefits: ["Respiratory health", "Immunity", "Stress reduction", "Antioxidant"],
-      remedies: [
-        "Chew 4-5 fresh Tulsi leaves daily on empty stomach",
-        "Prepare Tulsi tea by boiling leaves in water for 10 minutes",
-        "Inhale steam from boiling Tulsi leaves for respiratory relief"
-      ],
-      precautions: "Generally safe, may lower blood sugar levels"
-    },
-    turmeric: {
-      name: "Turmeric",
-      scientificName: "Curcuma longa",
-      system: "Ayurveda",
-      benefits: ["Anti-inflammatory", "Immunity", "Digestive health", "Joint pain relief"],
-      remedies: [
-        "Golden milk: Mix 1 tsp turmeric in warm milk with honey",
-        "Turmeric paste for wounds and skin conditions",
-        "Add fresh turmeric to daily cooking"
-      ],
-      precautions: "May increase bleeding risk, avoid with blood thinners"
-    },
-    neem: {
-      name: "Neem",
-      scientificName: "Azadirachta indica",
-      system: "Ayurveda",
-      benefits: ["Skin health", "Blood purification", "Immunity", "Antibacterial"],
-      remedies: [
-        "Chew 2-3 neem leaves daily for blood purification",
-        "Neem oil for skin conditions and wounds",
-        "Neem water for face wash and oral health"
-      ],
-      precautions: "Avoid during pregnancy, may lower blood sugar"
-    }
-  };
-
   const callHerbalAPI = async (query) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/query`, {
+      const response = await fetch(`${CONFIG.API_BASE_URL}/query`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query })
@@ -153,13 +102,7 @@ ${(plant.herb.remedies || []).map(r => `• ${r.condition}: ${r.preparation}`).j
     } catch (error) {
       console.error("Error:", error);
       setError("Failed to get response from server. Using local database.");
-      const botMsg = {
-        id: Date.now() + 1,
-        type: "bot",
-        content: generateBotResponse(userMsg.content),
-        timestamp: new Date()
-      };
-      setMessages((m) => [...m, botMsg]);
+      
     } finally {
       setIsTyping(false);
     }
@@ -195,53 +138,6 @@ ${(plant.herb.remedies || []).map(r => `• ${r.condition}: ${r.preparation}`).j
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
-  const generateBotResponse = (userMessage) => {
-    const lowerMessage = userMessage.toLowerCase();
-    
-    // Check for specific plant queries
-    for (const [key, plant] of Object.entries(herbalDatabase)) {
-      if (lowerMessage.includes(key) || lowerMessage.includes(plant.name.toLowerCase())) {
-        return `🌿 **${plant.name}** (${plant.scientificName})
-
-**AYUSH System**: ${plant.system}
-
-**Benefits**: ${plant.benefits.join(', ')}
-
-**Traditional Remedies**:
-${plant.remedies.map(remedy => `• ${remedy}`).join('\n')}
-
-**⚠️ Precautions**: ${plant.precautions}
-
-Would you like to know more about any specific aspect of ${plant.name}?`;
-      }
-    }
-
-    // Check for symptom-based queries
-    for (const [symptom, herbs] of Object.entries(symptomToHerbs)) {
-      if (lowerMessage.includes(symptom)) {
-        const recommendations = herbs.map(herb => herbalDatabase[herb]).filter(Boolean);
-        const response = `🎯 For **${symptom}**, I recommend these AYUSH herbs:
-
-${recommendations.map(plant => `🌱 **${plant.name}**
-   • Benefits: ${plant.benefits.slice(0, 3).join(', ')}
-   • Quick remedy: ${plant.remedies[0]}`).join('\n\n')}
-
-💡 Would you like detailed information about any of these herbs?`;
-        return response;
-      }
-    }
-
-    // General responses
-    const generalResponses = [
-      "🌿 I'd be happy to help you with herbal remedies! Could you tell me more about your specific concern or the plant you're interested in?",
-      "🍃 Please describe your symptoms or mention a specific medicinal plant, and I'll provide AYUSH-based guidance.",
-      "🌱 I can help you with information about Ashwagandha, Tulsi, Turmeric, Neem, and many other medicinal plants. What would you like to know?",
-      "💚 For the best herbal recommendations, please share your health concern or ask about a specific plant from traditional medicine systems."
-    ];
-
-    return generalResponses[Math.floor(Math.random() * generalResponses.length)];
   };
 
   const handleSendMessage = async () => {
