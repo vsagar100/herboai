@@ -536,8 +536,199 @@ class IntelligentHerbalAI:
             'pregnancy': ['shatavari', 'dates', 'almonds', 'milk'],
             'elderly': ['brahmi', 'ashwagandha', 'shatavari', 'bala']
         }
-    
+###############################################
+
+# Add these methods to your IntelligentHerbalAI class in search.py
+
+    def _format_herb_data_for_frontend(self, herbs, language):
+        """Format herb data with proper language support for frontend display"""
+        formatted_herbs = []
+        
+        for herb in herbs:
+            formatted_herb = {
+                'id': herb.get('id', 0),
+                'name': self._get_herb_name_in_language(herb, language),
+                'scientific_name': herb.get('scientific_name', ''),
+                'common_names': self._get_common_names_in_language(herb, language),
+                'ayush_system': herb.get('ayush_system', 'Ayurveda'),
+                'parts_used': self._translate_field_to_language(herb.get('parts_used', ''), language),
+                'uses': self._translate_field_to_language(herb.get('uses', ''), language),
+                'properties': self._translate_field_to_language(herb.get('properties', ''), language),
+                'contraindications': self._translate_field_to_language(
+                    herb.get('contraindications', '') or herb.get('precautions', ''), 
+                    language
+                ),
+                'remedies': self._format_remedies_for_language(herb.get('remedies', []), language),
+                'languages': herb.get('languages', {})
+            }
+            formatted_herbs.append(formatted_herb)
+        
+        return formatted_herbs
+
+    def _get_common_names_in_language(self, herb, language):
+        """Get common names prioritizing the requested language"""
+        common_names = herb.get('common_names', [])
+        languages_dict = herb.get('languages', {})
+        
+        # Start with the name in requested language if available
+        names = []
+        if language in languages_dict and languages_dict[language]:
+            names.append(languages_dict[language])
+        
+        # Add main name if not already included
+        main_name = herb.get('name', '')
+        if main_name and main_name not in names:
+            names.append(main_name)
+        
+        # Add other common names
+        if isinstance(common_names, list):
+            for name in common_names:
+                if name and name not in names:
+                    names.append(name)
+        
+        return names[:5]  # Limit to 3 names
+
+    def _format_remedies_for_language(self, remedies, language):
+        """Format remedies with proper language translation"""
+        if not remedies:
+            return []
+        
+        formatted_remedies = []
+        for remedy in remedies[:3]:  # Limit to 3 remedies
+            if isinstance(remedy, dict):
+                formatted_remedy = {
+                    'condition': self._translate_field_to_language(remedy.get('condition', ''), language),
+                    'preparation': self._translate_field_to_language(remedy.get('preparation', ''), language),
+                    'dosage': self._translate_field_to_language(remedy.get('dosage', ''), language) if remedy.get('dosage') else ''
+                }
+                formatted_remedies.append(formatted_remedy)
+        
+        return formatted_remedies
+
+    def _translate_field_to_language(self, text, target_language):
+        """Translate a field to target language if needed"""
+        if not text or target_language == 'en':
+            return str(text)
+        
+        # Check if text is already in target script
+        if target_language in ['hi', 'mr'] and any('\u0900' <= ch <= '\u097F' for ch in str(text)):
+            return str(text)
+        
+        # Use predefined translations for common terms
+        common_translations = {
+            'hi': {
+                'Leaves': 'पत्ते',
+                'Roots': 'जड़ें', 
+                'Bark': 'छाल',
+                'Seeds': 'बीज',
+                'Flowers': 'फूल',
+                'Whole plant': 'पूरा पौधा',
+                'Rhizome': 'प्रकंद',
+                'Immunity booster': 'रोग प्रतिरोधक क्षमता बढ़ाने वाला',
+                'Anti-inflammatory': 'सूजन रोधी',
+                'Antioxidant': 'एंटीऑक्सीडेंट',
+                'cold and cough': 'सर्दी और खांसी',
+                'Avoid during pregnancy': 'गर्भावस्था में उपयोग न करें',
+                'Avoid in gallstones': 'पित्त की पथरी में न लें',
+                'Consult doctor before use': 'उपयोग से पहले चिकित्सक से सलाह लें',
+                'Boil Tulsi leaves in water and drink warm': 'तुलसी के पत्तों को पानी में उबालकर गर्म पिएं',
+                'Apply turmeric paste on wounds': 'घावों पर हल्दी का पेस्ट लगाएं'
+            },
+            'mr': {
+                'Leaves': 'पाने',
+                'Roots': 'मुळे',
+                'Bark': 'सालकाठ', 
+                'Seeds': 'बिया',
+                'Flowers': 'फुले',
+                'Whole plant': 'संपूर्ण वनस्पती',
+                'Rhizome': 'भूकंद',
+                'Immunity booster': 'रोगप्रतिकारशक्ती वाढवणारे',
+                'Anti-inflammatory': 'सूज कमी करणारे',
+                'Antioxidant': 'अँटीऑक्सिडंट',
+                'cold and cough': 'सर्दी आणि खोकला',
+                'Avoid during pregnancy': 'गर्भावस्थेदरम्यान वापर करू नका',
+                'Avoid in gallstones': 'पित्ताशयात खडे असल्यास वापर करू नका',
+                'Consult doctor before use': 'वापरण्यापूर्वी डॉक्टरांचा सल्ला घ्या',
+                'Boil Tulsi leaves in water and drink warm': 'तुळशीची पाने पाण्यात उकळून गरम प्या',
+                'Apply turmeric paste on wounds': 'जखमांवर हळदीचा पेस्ट लावा'
+            }
+        }
+        
+        text_str = str(text)
+        translations = common_translations.get(target_language, {})
+        
+        # Try direct translation first
+        if text_str in translations:
+            return translations[text_str]
+        
+        # Try to translate individual terms
+        for english_term, translated_term in translations.items():
+            if english_term.lower() in text_str.lower():
+                text_str = text_str.replace(english_term, translated_term)
+        
+        # Fallback: try using the translator utility if available
+        try:
+            from utils.translator import translate_text
+            return translate_text(text_str, 'en', target_language)
+        except:
+            pass
+        
+        return text_str
+
+    def _get_herb_name_in_language(self, herb, language):
+        """Get herb name in specified language with fallback"""
+        if language in ['hi', 'mr']:
+            languages = herb.get('languages', {})
+            if isinstance(languages, dict) and language in languages:
+                lang_name = languages[language]
+                if lang_name and lang_name.strip():
+                    return lang_name
+        
+        # Fallback to main name
+        return herb.get('name', '')
+
+    # MOST IMPORTANT: Update your process_query method to actually use the formatting
     def process_query(self, query):
+        """
+        Main query processing pipeline with improved formatting
+        """
+        print(f"\n=== PROCESSING QUERY: '{query}' ===")
+        
+        # Step 1: Language detection
+        language = self.detect_language_advanced(query)
+        print(f"Detected language: {language}")
+        
+        # Step 2: Intent analysis
+        intent_data = self.analyze_intent(query, language)
+        intent_data['original_query'] = query
+        print(f"Intent analysis: {intent_data}")
+        
+        # Step 3: Find relevant herbs
+        relevant_herbs = self.find_relevant_herbs(intent_data)
+        print(f"Found {len(relevant_herbs)} relevant herbs")
+        
+        # Step 4: Format herbs data for frontend (THIS IS THE KEY ADDITION)
+        formatted_herbs = self._format_herb_data_for_frontend(relevant_herbs, language)
+        
+        # Step 5: Generate contextual response
+        response = self.generate_contextual_response(query, relevant_herbs, intent_data)
+        
+        # Step 6: Prepare API response with properly formatted data
+        api_response = {
+            'response_text': response,
+            'herbs_found': len(relevant_herbs),
+            'intent': intent_data['intent'],
+            'language': language,
+            'confidence': intent_data['confidence'],
+            'herbs_data': formatted_herbs,  # Now properly formatted for frontend
+            'entities': intent_data['entities']
+        }
+        
+        print(f"=== RESPONSE GENERATED ===\n")
+        return api_response    
+
+###############################################
+    def process_query1(self, query):
         """
         Main query processing pipeline - This is the core AI method.
         
