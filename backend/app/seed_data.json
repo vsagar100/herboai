@@ -1,0 +1,173 @@
+[
+  {
+    "id":"herb_0001","name":"Ashwagandha","scientific_name":"Withania somnifera","ayush_system":["Ayurveda"],
+    "synonyms":["Indian ginseng","Winter cherry"],"parts_used":["root","leaf"],
+    "uses":"Adaptogen; reduces stress, improves sleep, boosts immunity",
+    "phytochemicals":"withanolides, alkaloids","dosage":"250–600 mg extract daily (consult practitioner)",
+    "contraindications":"Pregnancy, autoimmune disorders; interaction with sedatives",
+    "formulations":["powder","capsule","decoction"],
+    "references":[{"type":"text","source":"Charaka Samhita","url":""}],
+    "languages":{
+      "en":{"short_description":"Adaptogen used for stress and vitality","long_description":"Ashwagandha is used as a rasayana to support stress adaptation, sleep quality, and immune function."},
+      "hi":{"short_description":"तनाव व थकान हेतु उपयोगी","long_description":"अश्वगंधा को रसायन माना जाता है; तनाव सहनशीलता, नींद और प्रतिरक्षा में सहायक।"},
+      "mr":{"short_description":"ताण कमी व शक्तिवर्धक","long_description":"अश्वगंधा हे रसायन असून ताण सहनशक्ती, झोप आणि रोगप्रतिकारशक्ती सुधारते."}
+    },
+    "examples":["Root decoction 10 g in 200 ml water, reduce by half."]
+  },
+  {
+    "id":"herb_0002","name":"Tulsi","scientific_name":"Ocimum tenuiflorum","ayush_system":["Ayurveda"],
+    "synonyms":["Holy basil"],"parts_used":["leaf","seed"],
+    "uses":"Respiratory relief, antimicrobial, adaptogenic",
+    "phytochemicals":"eugenol, ursolic acid","dosage":"Leaf infusion 2–3 cups/day",
+    "contraindications":"Anticoagulant interaction possible","formulations":["tea","kadha","tincture"],
+    "references":[{"type":"paper","source":"J Ethnopharmacol","url":""}],
+    "languages":{
+      "en":{"short_description":"Respiratory support herb","long_description":"Useful in cough, cold; supports stress balance and immunity."},
+      "hi":{"short_description":"श्वसन तंत्र हेतु सहायक","long_description":"खाँसी‑जुकाम में लाभदायक; तनाव संतुलन व प्रतिरक्षा में सहायक।"},
+      "mr":{"short_description":"श्वसन आरोग्यासाठी उपयुक्त","long_description":"खोकला‑सर्दीमध्ये उपयोगी; ताण संतुलन व प्रतिकारशक्तीस मदत."}
+    },
+    "examples":["Kadha: Tulsi + ginger + black pepper"]
+  },
+  {
+    "id":"herb_0003","name":"Triphala","scientific_name":"—","ayush_system":["Ayurveda"],
+    "synonyms":["Haritaki, Bibhitaki, Amalaki"],"parts_used":["fruit"],
+    "uses":"Digestive tonic, mild laxative, antioxidant",
+    "phytochemicals":"tannins, gallic acid","dosage":"1–2 tsp powder at bedtime",
+    "contraindications":"Diarrhea, pregnancy caution","formulations":["powder","tablet"],
+    "references":[{"type":"text","source":"Sarangadhara Samhita","url":""}],
+    "languages":{
+      "en":{"short_description":"Classic digestive formulation","long_description":"Balances digestion, supports detox and antioxidant status."},
+      "hi":{"short_description":"पाचन हेतु पारंपरिक योग","long_description":"पाचन संतुलन व एंटीऑक्सिडेंट समर्थन।"},
+      "mr":{"short_description":"पचनासाठी पारंपरिक योग","long_description":"पचन संतुलन व अँटिऑक्सिडेंट मदत."}
+    },
+    "examples":["1 tsp with warm water at night"]
+  },
+  {
+    "id":"herb_0004","name":"Guduchi","scientific_name":"Tinospora cordifolia","ayush_system":["Ayurveda"],
+    "synonyms":["Giloy"],"parts_used":["stem"],
+    "uses":"Immunity, fever management, hepatoprotective",
+    "phytochemicals":"tinosporaside, berberine","dosage":"Stem decoction 30–60 ml",
+    "contraindications":"Autoimmune disorders caution","formulations":["decoction","tablet"],
+    "references":[{"type":"text","source":"Bhavaprakasha","url":""}],
+    "languages":{
+      "en":{"short_description":"Immune‑modulating climber","long_description":"Used in jvara (fevers), liver support, and general immunity."},
+      "hi":{"short_description":"प्रतिरक्षा बढ़ाने में सहायक","long_description":"ज्वर, यकृत स्वास्थ्य व प्रतिरक्षा के लिए उपयोगी।"},
+      "mr":{"short_description":"प्रतिकारशक्ती वाढवते","long_description":"ज्वर नियंत्रण, यकृत आरोग्य व प्रतिकारशक्तीसाठी उपयोगी."}
+    },
+    "examples":["Fresh stem decoction in fevers"]
+  },
+  {
+    "id":"herb_0005","name":"Brahmi","scientific_name":"Bacopa monnieri","ayush_system":["Ayurveda"],
+    "synonyms":["Water hyssop"],"parts_used":["leaf"],
+    "uses":"Cognition, memory, anxiety relief",
+    "phytochemicals":"bacosides","dosage":"300 mg extract/day",
+    "contraindications":"Thyroid disorders caution","formulations":["ghrita","tablet"],
+    "references":[{"type":"paper","source":"Phytomedicine","url":""}],
+    "languages":{
+      "en":{"short_description":"Nootropic herb","long_description":"Supports memory consolidation and calm focus."},
+      "hi":{"short_description":"संज्ञान व स्मरण शक्ति हेतु","long_description":"स्मरण शक्ति व शांत एकाग्रता में सहायक।"},
+      "mr":{"short_description":"स्मरणशक्तीसाठी उपयुक्त","long_description":"स्मृती दृढीकरण व शांत एकाग्रतेस मदत."}
+    },
+    "examples":["Brahmi ghrita 1 tsp with warm milk"]
+  },
+  {
+    "id":"herb_0006","name":"Shatavari","scientific_name":"Asparagus racemosus","ayush_system":["Ayurveda"],
+    "synonyms":["Wild asparagus"],"parts_used":["root"],
+    "uses":"Women’s tonic, galactagogue, cooling",
+    "phytochemicals":"steroidal saponins","dosage":"500 mg–1 g powder/day",
+    "contraindications":"Estrogen‑sensitive conditions caution","formulations":["powder","tablet"],
+    "references":[{"type":"text","source":"Ashtanga Hridaya","url":""}],
+    "languages":{
+      "en":{"short_description":"Female reproductive support","long_description":"Traditionally supports lactation and cooling nourishment."},
+      "hi":{"short_description":"महिलाओं का पोषक टॉनिक","long_description":"दुग्धस्राव व शीतल पोषण में सहायक।"},
+      "mr":{"short_description":"स्त्रियांसाठी पोषक औषध","long_description":"दूधस्राव व शीतल पोषणात मदत."}
+    },
+    "examples":["Shatavari kalpa with milk"]
+  },
+  {
+    "id":"herb_0007","name":"Neem","scientific_name":"Azadirachta indica","ayush_system":["Ayurveda","Siddha","Unani"],
+    "synonyms":["Margosa"],"parts_used":["leaf","bark","seed"],
+    "uses":"Antimicrobial, skin, blood purifier",
+    "phytochemicals":"azadirachtin, nimbin","dosage":"Bitter leaf infusion 1 cup/day",
+    "contraindications":"Pregnancy; hypoglycemia risk","formulations":["oil","paste","decoction"],
+    "references":[{"type":"paper","source":"Fitoterapia","url":""}],
+    "languages":{
+      "en":{"short_description":"Bitter antimicrobial tree","long_description":"Used for skin conditions, dandruff, and oral hygiene."},
+      "hi":{"short_description":"कडुवा जीवाणुरोधी वृक्ष","long_description":"त्वचा, रूसी व मुख‑स्वास्थ्य में उपयोगी।"},
+      "mr":{"short_description":"कडू जीवाणुरोधी वृक्ष","long_description":"त्वचा विकार, कोंडा व तोंडाच्या आरोग्यासाठी उपयुक्त."}
+    },
+    "examples":["Neem leaf paste for acne"]
+  },
+  {
+    "id":"herb_0008","name":"Amla","scientific_name":"Phyllanthus emblica","ayush_system":["Ayurveda"],
+    "synonyms":["Indian gooseberry"],"parts_used":["fruit"],
+    "uses":"Rasayana, vitamin C rich, hair and skin",
+    "phytochemicals":"ascorbic acid, polyphenols","dosage":"10–20 ml juice/day",
+    "contraindications":"Gastritis caution","formulations":["churna","murabba","ras"],
+    "references":[{"type":"text","source":"Charaka Samhita","url":""}],
+    "languages":{
+      "en":{"short_description":"Rejuvenative fruit","long_description":"Supports digestion, hair vitality, and antioxidant status."},
+      "hi":{"short_description":"रसायन फल","long_description":"पाचन, केश व एंटीऑक्सिडेंट हेतु उपयोगी।"},
+      "mr":{"short_description":"रसायन फल","long_description":"पचन, केस व अँटिऑक्सिडेंटसाठी उपयुक्त."}
+    },
+    "examples":["Amla juice in the morning"]
+  },
+  {
+    "id":"herb_0009","name":"Haritaki","scientific_name":"Terminalia chebula","ayush_system":["Ayurveda"],
+    "synonyms":["Chebulic myrobalan"],"parts_used":["fruit"],
+    "uses":"Digestive, mild laxative, vata balancing",
+    "phytochemicals":"chebulinic acid","dosage":"1–3 g powder at night",
+    "contraindications":"Diarrhea; pregnancy caution","formulations":["powder","tablet"],
+    "references":[{"type":"text","source":"Nighantu","url":""}],
+    "languages":{
+      "en":{"short_description":"Vata‑pacifying fruit","long_description":"Supports bowel regularity and digestion."},
+      "hi":{"short_description":"वात शमन हेतु","long_description":"मलविसर्जन व पाचन के लिए सहायक।"},
+      "mr":{"short_description":"वातशामक","long_description":"पोट साफ होण्यास व पचनास मदत."}
+    },
+    "examples":["With warm water at bedtime"]
+  },
+  {
+    "id":"herb_0010","name":"Arjuna","scientific_name":"Terminalia arjuna","ayush_system":["Ayurveda"],
+    "synonyms":["Arjun bark"],"parts_used":["bark"],
+    "uses":"Cardiotonic, lipid support",
+    "phytochemicals":"arjunolic acid, tannins","dosage":"3–6 g bark powder/day",
+    "contraindications":"Cardiac medication interaction possible","formulations":["kashayam","tablet"],
+    "references":[{"type":"paper","source":"Pharmacognosy Reviews","url":""}],
+    "languages":{
+      "en":{"short_description":"Cardiac support bark","long_description":"Traditional cardiotonic; consult physician for heart conditions."},
+      "hi":{"short_description":"हृदय हेतु लाभकारी","long_description":"पारंपरिक कार्डियोटॉनिक; हृदय रोग में चिकित्सकीय परामर्श आवश्यक।"},
+      "mr":{"short_description":"हृदयासाठी उपयुक्त","long_description":"परंपरागत कार्डियोटॉनिक; हृदयरोगात वैद्यकीय सल्ला घ्या."}
+    },
+    "examples":["Arjuna bark decoction"]
+  },
+  {
+    "id":"herb_0011","name":"Mulethi","scientific_name":"Glycyrrhiza glabra","ayush_system":["Ayurveda","Unani"],
+    "synonyms":["Licorice"],"parts_used":["root"],
+    "uses":"Soothing demulcent, cough, gastritis",
+    "phytochemicals":"glycyrrhizin","dosage":"250–500 mg extract/day",
+    "contraindications":"Hypertension, edema (mineralocorticoid effects)",
+    "formulations":["powder","lozenges"],
+    "references":[{"type":"paper","source":"Herbal Medicine","url":""}],
+    "languages":{
+      "en":{"short_description":"Soothing root for cough","long_description":"Coats mucosa; helps dry cough and gastritis."},
+      "hi":{"short_description":"गले की खराश हेतु","long_description":"श्लेष्मा पर परत बनाकर आराम देता है।"},
+      "mr":{"short_description":"घशासाठी शांतिकारक","long_description":"श्लेष्मल त्वचेवर आवरण बनवते; खोकला/अम्लपित्तात मदत."}
+    },
+    "examples":["Licorice tea for dry cough"]
+  },
+  {
+    "id":"herb_0012","name":"Turmeric","scientific_name":"Curcuma longa","ayush_system":["Ayurveda","Unani","Siddha"],
+    "synonyms":["Haldi","Haridra"],"parts_used":["rhizome"],
+    "uses":"Anti‑inflammatory, wound healing, antioxidant",
+    "phytochemicals":"curcumin","dosage":"500 mg extract 1–2×/day with piperine",
+    "contraindications":"Gallstones, anticoagulants caution",
+    "formulations":["powder","paste","capsule"],
+    "references":[{"type":"paper","source":"Nutrients","url":""}],
+    "languages":{
+      "en":{"short_description":"Golden anti‑inflammatory","long_description":"Supports joint comfort, liver function, and wound healing."},
+      "hi":{"short_description":"प्राकृतिक सूजनरोधी","long_description":"जोड़ों की सुविधा, यकृत व घाव भरने में सहायक।"},
+      "mr":{"short_description":"नैसर्गिक दाहशामक","long_description":"सांध्यांच्या वेदना, यकृत व जखम भरण्यास मदत."}
+    },
+    "examples":["Haldi‑doodh at bedtime"]
+  }
+]

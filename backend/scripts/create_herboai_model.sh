@@ -1,0 +1,2 @@
+echo "FROM ../scripts/Llama-3.2-3B-Instruct-Q4_K_M.gguf" > Modelfile
+ollama create herboai -f Modelfile
