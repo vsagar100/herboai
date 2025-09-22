@@ -379,7 +379,7 @@ const HerboAI= () => {
                                 {message.metadata.confidence && (
                                   <span>Confidence: {Math.round(message.metadata.confidence * 100)}%</span>
                                 )}
-                              </div>
+                              </div>                              
                             </div>
                           )}
                         </div>
@@ -412,6 +412,7 @@ const HerboAI= () => {
                 </div>
               </div>
             )}
+            
             
             <div ref={messagesEndRef} />
           </div>

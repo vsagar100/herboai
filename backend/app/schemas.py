@@ -1,42 +1,46 @@
-from typing import List, Optional, Literal
-from pydantic import BaseModel, Field
-
-Lang = Literal["en", "hi", "mr"]
-
-class HerbRef(BaseModel):
-    type: Literal["text","paper","url"]
-    source: str
-    url: Optional[str] = ""
-
-class HerbLang(BaseModel):
-    short_description: str
-    long_description: str
-
-class Herb(BaseModel):
-    id: str = Field(..., examples=["herb_0001"])
-    name: str
-    scientific_name: Optional[str] = None
-    ayush_system: List[str] = ["Ayurveda"]
-    synonyms: List[str] = []
-    parts_used: List[str] = []
-    uses: str = ""
-    phytochemicals: str = ""
-    dosage: str = ""
-    contraindications: str = ""
-    formulations: List[str] = []
-    references: List[HerbRef] = []
-    languages: dict[Lang, HerbLang]
-    examples: List[str] = []
+from pydantic import BaseModel
+from typing import List, Optional, Dict, Any
 
 class QueryRequest(BaseModel):
-    question: str
-    lang: Optional[Lang] = None  # if None → auto detect
-    top_k: int = 4
+    query: str  # Frontend sends "query" not "question"
+    lang: Optional[str] = "en"
+
+class HerbRemedySchema(BaseModel):
+    condition: str
+    preparation: str
+    dosage: Optional[str] = None
+
+class HerbDataSchema(BaseModel):
+    id: str
+    name: str
+    scientific_name: Optional[str] = ""
+    common_names: List[str] = []
+    uses: str
+    ayush_system: Optional[str] = "Ayurveda"
+    parts_used: Optional[str] = ""
+    contraindications: Optional[str] = ""
+    dosage: Optional[str] = ""
+    remedies: List[HerbRemedySchema] = []
+    description: Optional[str] = ""
+
+class QueryMetadata(BaseModel):
+    language: str
+    query_length: Optional[int] = 0
+    herbs_found: Optional[int] = 0
+    sources_used: Optional[int] = 0
+    confidence: Optional[float] = 0.0
+    intent: Optional[str] = "general_health"
+    error: Optional[bool] = False
 
 class QueryAnswer(BaseModel):
-    answer: str
-    lang: Lang
-    sources: List[str]  # herb ids
+    success: bool
+    ai_response: str
+    results: List[HerbDataSchema] = []  # Frontend expects "results" not "sources"
+    metadata: QueryMetadata
 
-class SearchResponse(BaseModel):
-    matches: List[dict]
+class ErrorResponse(BaseModel):
+    success: bool = False
+    error: str
+    ai_response: str
+    results: List[Any] = []
+    metadata: Dict[str, Any] = {}
