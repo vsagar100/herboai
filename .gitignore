@@ -5,5 +5,5 @@ node_modules
 backend/routes/__pycache__
 backend/node_modules/__pycache__
 backend/database/sqlite3.exe
-models/*.gguf
+backend/models/*.gguf
 *.pyc

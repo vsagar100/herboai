@@ -1,5 +1,5 @@
 # File: app/main.py
-# Main FastAPI application with enhanced language support
+# Updated main.py with intelligent contextual herb card generation
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,6 +7,7 @@ from app.rag_engine import answer, search
 from app.ollama_llm_adapter import get_llm
 from app.db import list_herbs, fetch_herb
 from app.i18n import detect_lang, get_language_name
+from app.herb_card_generator import generate_contextual_herb_cards
 import json
 from typing import List, Dict, Any
 from loguru import logger
@@ -42,65 +43,27 @@ def semantic_search(q: str = Query(..., min_length=2), k: int = 5):
     hits = search(q, top_k=k)
     return {"matches": [{"id": i, "score": s} for i, s in hits]}
 
-def format_herb_for_frontend(herb_row: dict, lang: str = "en") -> dict:
-    """Format herb data to match frontend HerbCard expectations"""
-    try:
-        languages_data = json.loads(herb_row.get("languages_json", "{}"))
-    except (json.JSONDecodeError, TypeError):
-        languages_data = {}
-    
-    # Get language-specific data
-    lang_data = languages_data.get(lang, {})
-    en_data = languages_data.get("en", {})
-    
-    # Extract common names
-    common_names = []
-    if lang_data.get("common_names"):
-        if isinstance(lang_data["common_names"], list):
-            common_names.extend(lang_data["common_names"])
-        else:
-            common_names.append(lang_data["common_names"])
-    
-    if en_data.get("common_names") and lang != "en":
-        if isinstance(en_data["common_names"], list):
-            common_names.extend(en_data["common_names"])
-        else:
-            common_names.append(en_data["common_names"])
-    
-    # Build formatted herb object
-    formatted_herb = {
-        "id": herb_row.get("id"),
-        "name": herb_row.get("name", "Unknown"),
-        "scientific_name": herb_row.get("scientific_name", ""),
-        "common_names": common_names or [herb_row.get("name", "Unknown")],
-        "uses": herb_row.get("uses", "Uses not specified"),
-        "ayush_system": herb_row.get("ayush_system", "Ayurveda"),
-        "parts_used": herb_row.get("parts_used", ""),
-        "contraindications": herb_row.get("contraindications", ""),
-        "dosage": herb_row.get("dosage", ""),
-        "remedies": []
-    }
-    
-    # Add remedies if available in language data
-    if lang_data.get("remedies"):
-        formatted_herb["remedies"] = lang_data["remedies"]
-    elif en_data.get("remedies"):
-        formatted_herb["remedies"] = en_data["remedies"]
-    
-    # Add descriptions
-    description = (lang_data.get("short_description") or 
-                  en_data.get("short_description") or 
-                  formatted_herb["uses"])
-    formatted_herb["description"] = description
-    
-    return formatted_herb
-
 def determine_intent(query: str, lang: str) -> str:
     """Determine user intent based on query content"""
     query_lower = query.lower()
     
     # Multi-language keyword mapping
     intent_keywords = {
+        "pain_relief": {
+            "en": ["headache", "pain", "ache", "joint", "arthritis", "migraine"],
+            "hi": ["सिरदर्द", "दर्द", "जोड़", "गठिया", "माइग्रेन"],
+            "mr": ["डोकेदुखी", "दुखणे", "वेदना", "सांधे"]
+        },
+        "cough_cold": {
+            "en": ["cough", "cold", "throat", "respiratory", "bronchitis"],
+            "hi": ["खांसी", "सर्दी", "गला", "श्वसन"],
+            "mr": ["खोकला", "सर्दी", "घसा", "श्वसन"]
+        },
+        "digestive_health": {
+            "en": ["digestion", "stomach", "gastric", "indigestion", "acidity"],
+            "hi": ["पाचन", "पेट", "गैस", "अपच", "एसिडिटी"],
+            "mr": ["पाचन", "पोट", "गॅस", "अपचन"]
+        },
         "stress_relief": {
             "en": ["stress", "anxiety", "tension", "worry", "nervous"],
             "hi": ["तनाव", "चिंता", "घबराहट", "परेशानी"],
@@ -110,21 +73,6 @@ def determine_intent(query: str, lang: str) -> str:
             "en": ["immunity", "immune", "resistance", "defense"],
             "hi": ["प्रतिरक्षा", "रोग", "बचाव", "शक्ति"],
             "mr": ["रोगप्रतिकारक", "शक्ती", "संरक्षण"]
-        },
-        "digestive_health": {
-            "en": ["digestion", "stomach", "gastric", "indigestion"],
-            "hi": ["पाचन", "पेट", "गैस", "अपच"],
-            "mr": ["पाचन", "पोट", "गॅस"]
-        },
-        "respiratory_health": {
-            "en": ["respiratory", "breathing", "cough", "cold", "lungs"],
-            "hi": ["श्वसन", "सांस", "खांसी", "सर्दी", "फेफड़े"],
-            "mr": ["श्वसन", "श्वास", "खोकला", "सर्दी"]
-        },
-        "pain_relief": {
-            "en": ["pain", "ache", "headache", "joint", "arthritis"],
-            "hi": ["दर्द", "सिरदर्द", "जोड़", "गठिया"],
-            "mr": ["दुखणे", "डोकेदुखी", "सांधे", "वेदना"]
         },
         "skin_health": {
             "en": ["skin", "rash", "acne", "eczema", "dermatitis"],
@@ -144,11 +92,11 @@ def determine_intent(query: str, lang: str) -> str:
 @app.post("/query")
 async def query(request: dict):
     """
-    Handle query requests from frontend with enhanced language support
+    Handle query requests from frontend with intelligent contextual herb cards
     Expected frontend request: {"query": "user question", "lang": "optional"}
     """
     try:
-        # Extract query from request - handle both formats
+        # Extract query from request
         user_query = request.get("query") or request.get("question", "")
         user_lang = request.get("lang", None)
         
@@ -171,20 +119,21 @@ async def query(request: dict):
         # Generate answer using enhanced RAG
         ai_response, response_lang, source_herb_ids = await answer(user_query, target_lang, llm)
         
-        # Fetch and format herb data for frontend
-        herbs_data = []
-        for herb_id in source_herb_ids[:5]:  # Limit to top 5 herbs
-            herb_row = fetch_herb(herb_id)
-            if herb_row:
-                formatted_herb = format_herb_for_frontend(herb_row, response_lang)
-                herbs_data.append(formatted_herb)
+        # 🔥 NEW: Generate intelligent contextual herb cards
+        intelligent_herb_cards = await generate_contextual_herb_cards(
+            user_query=user_query,
+            target_lang=response_lang,
+            herb_ids=source_herb_ids,
+            ai_response=ai_response,
+            fetch_herb_func=fetch_herb
+        )
         
         # Determine user intent
         intent = determine_intent(user_query, response_lang)
         
-        # Calculate confidence score based on various factors
+        # Calculate confidence score
         confidence = 0.5  # Base confidence
-        if herbs_data:
+        if intelligent_herb_cards:
             confidence += 0.3  # Found relevant herbs
         if response_lang == detected_lang:
             confidence += 0.1  # Language detection matches
@@ -193,23 +142,24 @@ async def query(request: dict):
         
         confidence = min(confidence, 0.95)  # Cap at 95%
         
-        # Build metadata
+        # Build enhanced metadata
         metadata = {
             "language": response_lang,
             "detected_language": detected_lang,
             "query_length": len(user_query),
-            "herbs_found": len(herbs_data),
+            "herbs_found": len(intelligent_herb_cards),
             "sources_used": len(source_herb_ids),
             "confidence": round(confidence, 2),
             "intent": intent,
-            "language_name": get_language_name(response_lang)
+            "language_name": get_language_name(response_lang),
+            "processing_method": "intelligent_contextual"  # Indicates enhanced processing
         }
         
-        # Return response in frontend-expected format
+        # Return response with intelligent herb cards
         return {
             "success": True,
             "ai_response": ai_response,
-            "results": herbs_data,
+            "results": intelligent_herb_cards,  # These are now contextually intelligent!
             "metadata": metadata
         }
         
@@ -236,6 +186,7 @@ async def query(request: dict):
             "metadata": {
                 "language": error_lang,
                 "error": True,
-                "confidence": 0.0
+                "confidence": 0.0,
+                "processing_method": "error_fallback"
             }
         }

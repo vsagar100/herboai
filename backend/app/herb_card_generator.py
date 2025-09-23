@@ -1,5 +1,5 @@
 # File: app/herb_card_generator.py
-# Intelligent context-aware herb card generation
+# Complete intelligent context-aware herb card generation with all functions
 
 import json
 from typing import List, Dict, Any
@@ -43,7 +43,7 @@ async def generate_contextual_herb_cards(
     try:
         response = llm.generate(
             herb_card_prompt,
-            max_tokens=800,
+            max_tokens=1000,
             temperature=0.1
         )
         
@@ -92,6 +92,8 @@ Language Data: {json.dumps(lang_data, ensure_ascii=False)}
     if target_lang == "hi":
         return f"""आप एक AYUSH जड़ी-बूटी विशेषज्ञ हैं। उपयोगकर्ता के प्रश्न के अनुसार विशिष्ट जड़ी-बूटी कार्ड बनाएं।
 
+महत्वपूर्ण: केवल वैध JSON array वापस करें। कोई व्याख्या नहीं, कोई अतिरिक्त टेक्स्ट नहीं।
+
 उपयोगकर्ता का प्रश्न: {user_query}
 
 AI का मुख्य उत्तर: {ai_response}
@@ -99,18 +101,7 @@ AI का मुख्य उत्तर: {ai_response}
 उपलब्ध जड़ी-बूटी की जानकारी:
 {herbs_context}
 
-कृपया प्रत्येक जड़ी-बूटी के लिए JSON फॉर्मेट में विस्तृत कार्ड बनाएं जो केवल उपयोगकर्ता की समस्या से संबंधित हो। प्रत्येक कार्ड में शामिल करें:
-
-1. नाम और वैज्ञानिक नाम (हिंदी में)
-2. इस विशिष्ट समस्या के लिए उपयोग
-3. इस समस्या के लिए विशिष्ट उपचार विधि
-4. सटीक खुराक और उपयोग की विधि
-5. तैयारी की विधि
-6. सावधानियां
-7. कब तक उपयोग करें
-
-JSON फॉर्मेट:
-```json
+केवल इस JSON फॉर्मेट में वापस करें:
 [
   {{
     "id": "herb_id",
@@ -132,12 +123,13 @@ JSON फॉर्मेट:
     "parts_used": "उपयोग किए जाने वाले भाग"
   }}
 ]
-```
 
-केवल JSON आउटपुट दें, अन्य कोई टेक्स्ट न दें।"""
+महत्वपूर्ण: केवल JSON array वापस करें। कोई अन्य टेक्स्ट नहीं।"""
 
     elif target_lang == "mr":
         return f"""तुम्ही AYUSH औषधी वनस्पती तज्ञ आहात. वापरकर्त्याच्या प्रश्नानुसार विशिष्ट औषधी वनस्पती कार्ड तयार करा.
+
+महत्वाचे: फक्त वैध JSON array परत करा. कोणतेही स्पष्टीकरण नाही, कोणताही अतिरिक्त टेक्स्ट नाही.
 
 वापरकर्त्याचा प्रश्न: {user_query}
 
@@ -146,18 +138,7 @@ AI चे मुख्य उत्तर: {ai_response}
 उपलब्ध औषधी वनस्पतींची माहिती:
 {herbs_context}
 
-कृपया प्रत्येक औषधी वनस्पतीसाठी JSON फॉर्मेटमध्ये तपशीलवार कार्ड तयार करा जे फक्त वापरकर्त्याच्या समस्येशी संबंधित असेल. प्रत्येक कार्डमध्ये समाविष्ट करा:
-
-1. नाव आणि वैज्ञानिक नाव (मराठीत)
-2. या विशिष्ट समस्येसाठी वापर
-3. या समस्येसाठी विशिष्ट उपचार पद्धती
-4. अचूक डोस आणि वापराची पद्धत
-5. तयारीची पद्धत
-6. सावधगिरी
-7. किती दिवस वापरावे
-
-JSON फॉर्मेट:
-```json
+फक्त या JSON फॉर्मेटमध्ये परत करा:
 [
   {{
     "id": "herb_id",
@@ -179,12 +160,13 @@ JSON फॉर्मेट:
     "parts_used": "वापरले जाणारे भाग"
   }}
 ]
-```
 
-फक्त JSON आउटपुट द्या, इतर कोणताही टेक्स्ट नाही."""
+महत्वाचे: फक्त JSON array परत करा. इतर कोणताही टेक्स्ट नाही."""
 
     else:  # English
         return f"""You are an AYUSH herbal medicine expert. Create specific herb cards based on the user's query.
+
+CRITICAL: Return ONLY a valid JSON array. No explanations, no additional text, no markdown formatting.
 
 User's Question: {user_query}
 
@@ -193,18 +175,9 @@ AI's Main Response: {ai_response}
 Available Herb Information:
 {herbs_context}
 
-Please create detailed cards for each herb in JSON format that are ONLY relevant to the user's specific problem. Include for each card:
+Create detailed cards for each herb that are ONLY relevant to the user's specific problem.
 
-1. Name and scientific name
-2. Specific use for this condition
-3. Specific remedy methods for this problem
-4. Precise dosage and usage method
-5. Preparation method
-6. Precautions specific to this use
-7. Duration of use
-
-JSON Format:
-```json
+Return ONLY this JSON format:
 [
   {{
     "id": "herb_id",
@@ -226,9 +199,8 @@ JSON Format:
     "parts_used": "Parts of plant used"
   }}
 ]
-```
 
-Provide ONLY the JSON output, no other text."""
+IMPORTANT: Return ONLY the JSON array above. No other text before or after."""
 
 def parse_generated_herb_cards(response: str, target_lang: str) -> List[Dict[str, Any]]:
     """Parse the LLM generated herb cards from JSON response"""
@@ -249,8 +221,40 @@ def parse_generated_herb_cards(response: str, target_lang: str) -> List[Dict[str
             if end != -1:
                 cleaned_response = cleaned_response[start:end]
         
+        # More aggressive JSON extraction - find the JSON array bounds
+        cleaned_response = cleaned_response.strip()
+        
+        # Find the start of JSON array
+        start_bracket = cleaned_response.find('[')
+        if start_bracket == -1:
+            logger.error("No JSON array start found")
+            return create_fallback_from_response(response, target_lang)
+        
+        # Find the matching closing bracket
+        bracket_count = 0
+        end_bracket = -1
+        
+        for i in range(start_bracket, len(cleaned_response)):
+            char = cleaned_response[i]
+            if char == '[':
+                bracket_count += 1
+            elif char == ']':
+                bracket_count -= 1
+                if bracket_count == 0:
+                    end_bracket = i
+                    break
+        
+        if end_bracket == -1:
+            logger.error("No matching closing bracket found")
+            return create_fallback_from_response(response, target_lang)
+        
+        # Extract only the JSON array
+        json_only = cleaned_response[start_bracket:end_bracket + 1]
+        
+        logger.debug(f"Extracted JSON: {json_only[:200]}...")
+        
         # Parse JSON
-        herb_cards = json.loads(cleaned_response)
+        herb_cards = json.loads(json_only)
         
         # Validate and clean the parsed cards
         validated_cards = []
@@ -258,15 +262,96 @@ def parse_generated_herb_cards(response: str, target_lang: str) -> List[Dict[str
             if validate_herb_card(card):
                 validated_cards.append(card)
         
+        logger.info(f"Successfully parsed {len(validated_cards)} herb cards")
         return validated_cards
         
     except json.JSONDecodeError as e:
         logger.error(f"JSON parsing error: {e}")
-        logger.error(f"Response content: {response[:200]}")
-        return []
+        logger.error(f"Attempted JSON: {json_only if 'json_only' in locals() else 'N/A'}")
+        return create_fallback_from_response(response, target_lang)
     except Exception as e:
         logger.error(f"Error parsing herb cards: {e}")
-        return []
+        return create_fallback_from_response(response, target_lang)
+
+def create_fallback_from_response(response: str, target_lang: str) -> List[Dict[str, Any]]:
+    """Create fallback herb cards by extracting information from the raw response"""
+    
+    fallback_cards = []
+    
+    try:
+        # Try to extract herb information from the response text
+        lines = response.split('\n')
+        current_herb = {}
+        
+        for line in lines:
+            line = line.strip()
+            
+            # Look for herb names or IDs
+            if 'herb_' in line.lower() and 'id' in line.lower():
+                if current_herb:  # Save previous herb
+                    fallback_cards.append(create_basic_fallback_card(current_herb, target_lang))
+                current_herb = {'raw_text': line}
+            elif line and current_herb:
+                current_herb['raw_text'] = current_herb.get('raw_text', '') + ' ' + line
+        
+        # Add the last herb
+        if current_herb:
+            fallback_cards.append(create_basic_fallback_card(current_herb, target_lang))
+    
+    except Exception as e:
+        logger.error(f"Fallback parsing failed: {e}")
+    
+    # Ensure we always return at least one card
+    return fallback_cards[:4] if fallback_cards else [create_basic_fallback_card({}, target_lang)]
+
+def create_basic_fallback_card(herb_info: dict, target_lang: str) -> Dict[str, Any]:
+    """Create a basic herb card from extracted text"""
+    
+    fallback_messages = {
+        "en": {
+            "name": "Herbal Remedy",
+            "use": "Natural wellness support",
+            "prep": "Consult healthcare provider for preparation method",
+            "dose": "Follow practitioner guidance",
+            "precaution": "Consult healthcare professional before use"
+        },
+        "hi": {
+            "name": "जड़ी-बूटी उपचार",
+            "use": "प्राकृतिक स्वास्थ्य सहायता",
+            "prep": "तैयारी की विधि के लिए चिकित्सक से सलाह लें",
+            "dose": "चिकित्सक के मार्गदर्शन का पालन करें",
+            "precaution": "उपयोग से पहले स्वास्थ्य पेशेवर से सलाह लें"
+        },
+        "mr": {
+            "name": "औषधी वनस्पती उपचार",
+            "use": "नैसर्गिक आरोग्य आधार",
+            "prep": "तयारीच्या पद्धतीसाठी डॉक्टरांचा सल्ला घ्या",
+            "dose": "डॉक्टरांच्या मार्गदर्शनाचे पालन करा",
+            "precaution": "वापरण्यापूर्वी आरोग्य तज्ञांचा सल्ला घ्या"
+        }
+    }
+    
+    msgs = fallback_messages.get(target_lang, fallback_messages["en"])
+    
+    return {
+        "id": "fallback_herb",
+        "name": msgs["name"],
+        "scientific_name": "",
+        "common_names": [msgs["name"]],
+        "specific_use_for_query": msgs["use"],
+        "contextual_remedies": [
+            {
+                "condition": msgs["use"],
+                "preparation": msgs["prep"],
+                "dosage": msgs["dose"],
+                "duration": "As advised",
+                "timing": "As directed"
+            }
+        ],
+        "contraindications": msgs["precaution"],
+        "ayush_system": "Ayurveda",
+        "parts_used": "Various"
+    }
 
 def validate_herb_card(card: Dict[str, Any]) -> bool:
     """Validate that a herb card has required fields"""
