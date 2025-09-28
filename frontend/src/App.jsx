@@ -9,7 +9,8 @@ import PlantLibrary from "./pages/PlantLibrary";
 import ChatInterface from "./pages/ChatInterface";
 import AdminDashboard from "./pages/AdminDashboard";
 
-const api = axios.create({ baseURL: "http://localhost:5000/api" });
+const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "http://localhost:5000";
+const api = axios.create({ baseURL: `${API_ORIGIN}/api`, withCredentials: true });
 
 function AppShell({ children }) {
   return (

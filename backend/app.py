@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, session
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
@@ -11,6 +11,7 @@ from werkzeug.utils import secure_filename
 from math import ceil
 import json
 from datetime import datetime
+from functools import wraps
 
 # Import custom modules
 from services.nlp_service import NLPService
@@ -19,6 +20,7 @@ from services.rag_service import RAGService
 from services.embedding_service import EmbeddingService
 from utils.multilingual import MultilingualProcessor
 from config.settings import Config
+from services.translation_service import TranslationService
 
 # Initialize Flask app
 app = Flask(__name__, static_folder="static", static_url_path="/static")
@@ -26,13 +28,17 @@ app.config.from_object(Config)
 
 # Initialize extensions
 db = SQLAlchemy(app)
-CORS(app)
+CORS(app, supports_credentials=True, resources={r"/api/*": {"origins": "http://localhost:3000"}})
 
 UPLOAD_DIR = os.path.join(app.root_path, "static", "plant_images")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-change-me")
+ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
+ADMIN_PASS = os.environ.get("ADMIN_PASS", "admin123")
 
 multilingual_processor = MultilingualProcessor()
+translation_service = TranslationService()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -60,6 +66,36 @@ def _uses_json_text(val):
     if isinstance(val, list):
         return json.dumps(val, ensure_ascii=False)
     return json.dumps([], ensure_ascii=False)
+
+def is_admin():
+    return bool(session.get("admin"))
+def admin_required(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if not is_admin():
+            return jsonify({"error": "Unauthorized"}), 401
+        return f(*args, **kwargs)
+    return wrapper
+
+@app.post("/api/auth/login")
+def auth_login():
+    data = request.get_json(force=True) or {}
+    u = (data.get("username") or "").strip()
+    p = (data.get("password") or "")
+    if u == ADMIN_USER and p == ADMIN_PASS:
+        session["admin"] = True
+        session["username"] = u
+        return jsonify({"ok": True, "username": u})
+    return jsonify({"error": "Invalid credentials"}), 401
+
+@app.post("/api/auth/logout")
+def auth_logout():
+    session.clear()
+    return jsonify({"ok": True})
+
+@app.get("/api/auth/me")
+def auth_me():
+    return jsonify({"is_admin": is_admin(), "username": session.get("username")})
 
 # Database Models
 class Plant(db.Model):
@@ -130,7 +166,7 @@ class ChatHistory(db.Model):
 nlp_service = NLPService()
 vector_service = VectorService()
 embedding_service = EmbeddingService()
-rag_service = RAGService(Plant)
+rag_service = RAGService(Plant, Remedy)
 
 # API Routes
 
@@ -182,6 +218,7 @@ def get_plants():
         logger.error(f"Error fetching plants: {str(e)}")
         return jsonify({'error': 'Failed to fetch plants'}), 500
 
+@admin_required
 @app.route('/api/plants/<int:plant_id>', methods=['GET'])
 def get_plant(plant_id):
     """Get a specific plant by ID"""
@@ -210,7 +247,8 @@ def create_plant():
     )
     db.session.add(p); db.session.commit()
     return jsonify(p.to_dict()), 201
-    
+
+@admin_required
 @app.put("/api/plants/<int:pid>")
 def update_plant(pid):
     data = request.get_json(force=True) or {}
@@ -233,6 +271,7 @@ def update_plant(pid):
     db.session.commit()
     return jsonify(p.to_dict())
 
+@admin_required
 @app.delete("/api/plants/<int:pid>")
 def delete_plant(pid):
     p = Plant.query.get_or_404(pid)
@@ -250,40 +289,37 @@ def chat():
 
         # 1) Preprocess
         processed = nlp_service.process_query(query, language=language)
+        plants = rag_service.get_relevant_plants(processed, limit=5)
+        remedies = rag_service.get_relevant_remedies(processed, limit=3)
+        response_text = rag_service.generate_response(query, plants, remedies=remedies)
+        translated = translation_service.translate_out(response_text, target_lang=language, source_lang="en")
 
-        # 2) Retrieve (models expected)
-        relevant_models = rag_service.get_relevant_plants(processed, limit=5)
-
-        # 3) Generate response (accepts models or dicts, but we pass models)
-        response_text = rag_service.generate_response(query, relevant_models)
+      
 
         # 4) Prepare JSON-safe plants
-        relevant_out = []
-        for p in relevant_models:
-            if hasattr(p, "to_dict"):
-                relevant_out.append(p.to_dict())
-            elif isinstance(p, dict):
-                relevant_out.append(p)  # already dict
-            else:
-                # ultra-safe fallback
-                relevant_out.append({
-                    "id": getattr(p, "id", None),
-                    "name": getattr(p, "name", ""),
-                    "scientific_name": getattr(p, "scientific_name", ""),
-                    "ayush_system": getattr(p, "ayush_system", ""),
-                    "category": getattr(p, "category", ""),
-                    "uses": getattr(p, "uses", []),
-                    "description": getattr(p, "description", ""),
-                    "preparation": getattr(p, "preparation", ""),
-                    "contraindications": getattr(p, "contraindications", "")
-                })
+        plant_json = [p.to_dict() if hasattr(p, "to_dict") else p for p in plants[:5]]
+        remedy_json = []
+        for r in remedies:
+            remedy_json.append({
+                "id": r.id,
+                "symptom": r.symptom,
+                "diagnosis_pattern": r.diagnosis_pattern,
+                "plant_ids": r.plant_ids,
+                "dosage": r.dosage,
+                "lifestyle_recommendations": r.lifestyle_recommendations,
+                "preparation_method": r.preparation_method,
+                "ayush_system": r.ayush_system,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            })
 
         # (Optional) log chat_history here safely
 
         return jsonify({
-            "response": response_text,
-            "relevant_plants": relevant_out,
-            "session_id": session_id
+            "response": translated,
+            "relevant_plants": plant_json,
+            "remedies": remedy_json,
+            "session_id": session_id,
+            "language": language
         }), 200
 
     except Exception as e:

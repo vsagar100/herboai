@@ -1,15 +1,19 @@
+// src/pages/AdminDashboard.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import {
-  Plus, Pencil, Trash2, Upload, RefreshCcw, Search, X, Leaf, Image as ImageIcon
+  Plus, Pencil, Trash2, RefreshCcw, Search, X, Leaf,
+  Image as ImageIcon
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useGlobalState } from "../store";
 import { translations } from "../i18n";
 
+// ---------- API helpers ----------
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "http://localhost:5000";
-const api = axios.create({ baseURL: `${API_ORIGIN}/api` });
+const api = axios.create({ baseURL: `${API_ORIGIN}/api`, withCredentials: true });
 
+// ---------- small utils ----------
 const PER_PAGE_OPTIONS = [5, 9, 15, 30];
 
 const resolveImageUrl = (path) => {
@@ -33,12 +37,27 @@ const toArray = (val) => {
       .filter(Boolean);
   }
 };
-
 const toJsonText = (val) => JSON.stringify(toArray(val));
 
+// =========================================================
+// Admin Dashboard
+// =========================================================
 export default function AdminDashboard() {
   const [state] = useGlobalState();
-  const t = translations[state.language] || translations.en;
+  const t = (translations[state.language] || translations.en);
+  const title = t?.admin?.title || "Admin Dashboard";
+
+  // auth
+  const [auth, setAuth] = useState({ checked: false, is_admin: false });
+
+  useEffect(() => {
+   const onAuthChanged = (e) => {
+     const flag = !!e?.detail?.is_admin;
+     setAuth({ checked: true, is_admin: flag });
+   };
+   window.addEventListener("auth:changed", onAuthChanged);
+   return () => window.removeEventListener("auth:changed", onAuthChanged);
+ }, []);
 
   // table state
   const [plants, setPlants] = useState([]);
@@ -54,6 +73,19 @@ export default function AdminDashboard() {
   const [showForm, setShowForm] = useState(false);
   const [confirm, setConfirm] = useState(null); // {id, name}
 
+  // ---- auth gate ----
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await api.get("/auth/me");
+        setAuth({ checked: true, is_admin: !!data.is_admin });
+      } catch {
+        setAuth({ checked: true, is_admin: false });
+      }
+    })();
+  }, []);
+
+  // ---- load plants ----
   async function loadPlants() {
     setLoading(true);
     try {
@@ -71,22 +103,14 @@ export default function AdminDashboard() {
       setLoading(false);
     }
   }
-
+  useEffect(() => { if (auth.is_admin) loadPlants(); }, [auth.is_admin, page, perPage]);
   useEffect(() => {
-    loadPlants();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, perPage]);
-
-  // debounce search
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setPage(1);
-      loadPlants();
-    }, 300);
+    if (!auth.is_admin) return;
+    const timer = setTimeout(() => { setPage(1); loadPlants(); }, 300);
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query]);
+  }, [query, auth.is_admin]);
 
+  // ---- CRUD handlers ----
   const onCreate = () => {
     setEditing({
       id: null,
@@ -103,51 +127,42 @@ export default function AdminDashboard() {
     });
     setShowForm(true);
   };
-
-  const onEdit = (row) => {
-    setEditing({ ...row, uses: toArray(row.uses) });
-    setShowForm(true);
-  };
-
+  const onEdit = (row) => { setEditing({ ...row, uses: toArray(row.uses) }); setShowForm(true); };
   const onDelete = (row) => setConfirm({ id: row.id, name: row.name });
 
   async function createOrUpdate(plant, file) {
-  try {
-    // normalize uses to JSON string for backend TEXT column
-    const payload = { ...plant, uses: toJsonText(plant.uses) };
+    try {
+      const payload = { ...plant, uses: toJsonText(plant.uses) };
 
-    // 1) Create or update the plant itself
-    let saved;
-    if (plant.id) {
-      const { data } = await api.put(`/plants/${plant.id}`, payload);
-      saved = data;
-    } else {
-      const { data } = await api.post(`/plants`, payload);
-      saved = data; // has saved.id
+      // 1) create/update record
+      let saved;
+      if (plant.id) {
+        const { data } = await api.put(`/plants/${plant.id}`, payload);
+        saved = data;
+      } else {
+        const { data } = await api.post(`/plants`, payload);
+        saved = data;
+      }
+
+      // 2) upload image if provided (overrides any typed URL)
+      if (file) {
+        const fd = new FormData();
+        fd.append("file", file);
+        const { data: img } = await axios.post(
+          `${API_ORIGIN}/api/admin/plant/${saved.id}/image`,
+          fd,
+          { headers: { "Content-Type": "multipart/form-data" }, withCredentials: true }
+        );
+        saved = img.plant || saved;
+      }
+
+      setFlash(plant.id ? "Plant updated." : "Plant created.");
+      setShowForm(false); setEditing(null);
+      await loadPlants();
+    } catch {
+      setFlash("Save failed.");
     }
-
-    // 2) If a file was provided, upload it NOW (file wins over any typed URL)
-    if (file) {
-      const fd = new FormData();
-      fd.append("file", file);
-      const { data: img } = await axios.post(
-        `${API_ORIGIN}/api/admin/plant/${saved.id}/image`,
-        fd,
-        { headers: { "Content-Type": "multipart/form-data" } }
-      );
-      saved = img.plant || saved; // returned plant with image_path set
-    }
-
-    setFlash(plant.id ? "Plant updated." : "Plant created.");
-    setShowForm(false);
-    setEditing(null);
-    // reload list (or optimistically update)
-    await loadPlants();
-  } catch (err) {
-    setFlash("Save failed.");
   }
-}
-
 
   async function confirmDelete() {
     if (!confirm) return;
@@ -155,7 +170,6 @@ export default function AdminDashboard() {
       await api.delete(`/plants/${confirm.id}`);
       setFlash("Plant deleted.");
       setConfirm(null);
-      // adjust page if we removed last item on last page
       if (plants.length === 1 && page > 1) setPage((p) => Math.max(1, p - 1));
       else loadPlants();
     } catch {
@@ -163,9 +177,12 @@ export default function AdminDashboard() {
     }
   }
 
+  
+
+  // ---- header bar ----
   const HeaderBar = (
     <div className="flex items-center justify-between mb-6">
-      <h1 className="text-3xl font-bold text-gray-900">{t.admin.title}</h1>
+      <h1 className="text-3xl font-bold text-gray-900">{title}</h1>
       <div className="flex items-center gap-3">
         <button
           onClick={loadPlants}
@@ -183,6 +200,10 @@ export default function AdminDashboard() {
       </div>
     </div>
   );
+
+  // ---- auth rendering ----
+  if (!auth.checked) return <div className="p-8">Loading…</div>;
+  if (!auth.is_admin) return <AdminLogin onSuccess={() => setAuth({ checked: true, is_admin: true })} />;
 
   return (
     <div className="p-6 md:p-8 bg-gray-50 min-h-screen">
@@ -340,9 +361,7 @@ export default function AdminDashboard() {
         </div>
 
         {/* flash */}
-        {flash && (
-          <div className="mt-4 text-sm text-gray-700">{flash}</div>
-        )}
+        {flash && <div className="mt-4 text-sm text-gray-700">{flash}</div>}
       </div>
 
       <PlantFormModal
@@ -363,8 +382,9 @@ export default function AdminDashboard() {
   );
 }
 
-/* ---------- small components ---------- */
-
+// =========================================================
+// Small components
+// =========================================================
 function Thumbnail({ path, name }) {
   const url = resolveImageUrl(path);
   return (
@@ -397,9 +417,9 @@ function ImageUploadButton({ id, onUploaded, small }) {
       const { data } = await axios.post(
         `${API_ORIGIN}/api/admin/plant/${id}/image`,
         fd,
-        { headers: { "Content-Type": "multipart/form-data" } }
+        { headers: { "Content-Type": "multipart/form-data" }, withCredentials: true }
       );
-      if (onUploaded) onUploaded(data.plant);
+      onUploaded && onUploaded(data.plant);
     } finally {
       setBusy(false);
     }
@@ -480,7 +500,7 @@ function PlantFormModal({ open, value, onClose, onSave }) {
                 />
               </div>
 
-              {/* Image uploader + preview */}
+              {/* Image uploader + optional URL */}
               <div className="grid sm:grid-cols-2 gap-4">
                 <label className="block">
                   <div className="text-sm text-gray-700 mb-1">Plant Image</div>
@@ -491,7 +511,7 @@ function PlantFormModal({ open, value, onClose, onSave }) {
                     className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 border-gray-300"
                   />
                   <div className="text-xs text-gray-500 mt-1">
-                    JPG/PNG/WEBP/GIF. If you select a file, it will be uploaded on Save.
+                    If you select a file, it will be uploaded on Save.
                   </div>
                 </label>
 
@@ -504,12 +524,11 @@ function PlantFormModal({ open, value, onClose, onSave }) {
                     className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 border-gray-300"
                   />
                   <div className="text-xs text-gray-500 mt-1">
-                    If a file is chosen, it will override this URL.
+                    If a file is chosen, it overrides this URL.
                   </div>
                 </label>
               </div>
 
-              {/* Preview */}
               {(previewUrl || form.image_path) && (
                 <div className="rounded-lg overflow-hidden border">
                   <img
@@ -529,11 +548,7 @@ function PlantFormModal({ open, value, onClose, onSave }) {
             <div className="mt-5 flex justify-end gap-3">
               <button onClick={onClose} className="px-4 py-2 border rounded-lg hover:bg-gray-50">Cancel</button>
               <button
-                onClick={() => {
-                  // normalize uses to array; backend function will JSONify
-                  const usesArr = toArray(form.uses);
-                  onSave({ ...form, uses: usesArr }, file);
-                }}
+                onClick={() => onSave({ ...form, uses: toArray(form.uses) }, file)}
                 className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
               >
                 Save
@@ -545,7 +560,6 @@ function PlantFormModal({ open, value, onClose, onSave }) {
     </AnimatePresence>
   );
 }
-
 
 function ConfirmModal({ open, title, message, onCancel, onConfirm }) {
   return (
@@ -572,6 +586,41 @@ function ConfirmModal({ open, title, message, onCancel, onConfirm }) {
         </motion.div>
       )}
     </AnimatePresence>
+  );
+}
+
+function AdminLogin({ onSuccess }) {
+  const [u, setU] = useState("");
+  const [p, setP] = useState("");
+  const [err, setErr] = useState("");
+
+  const submit = async (e) => {
+    e.preventDefault();
+    try {
+      await axios.post(`${API_ORIGIN}/api/auth/login`, { username: u, password: p }, { withCredentials: true });
+      window.dispatchEvent(new CustomEvent("auth:changed", { detail: { is_admin: true } }));
+      onSuccess && onSuccess();
+    } catch {
+      setErr("Invalid credentials");
+    }
+  };
+
+  return (
+    <div className="min-h-[60vh] flex items-center justify-center p-6">
+      <form onSubmit={submit} className="bg-white p-6 rounded-xl shadow w-full max-w-sm">
+        <h2 className="text-xl font-semibold mb-4">Admin Login</h2>
+        <div className="mb-3">
+          <input value={u} onChange={(e) => setU(e.target.value)} placeholder="Username"
+            className="w-full px-3 py-2 border rounded-lg" />
+        </div>
+        <div className="mb-4">
+          <input type="password" value={p} onChange={(e) => setP(e.target.value)} placeholder="Password"
+            className="w-full px-3 py-2 border rounded-lg" />
+        </div>
+        {err && <div className="text-sm text-red-600 mb-3">{err}</div>}
+        <button className="w-full bg-green-600 text-white py-2 rounded-lg hover:bg-green-700">Login</button>
+      </form>
+    </div>
   );
 }
 

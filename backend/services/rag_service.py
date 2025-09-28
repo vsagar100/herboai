@@ -10,9 +10,10 @@ logger = logging.getLogger(__name__)
 class RAGService:
     """Retrieval-Augmented Generation service for herbal knowledge"""
     
-    def __init__(self, plant_model):
-        self.Plant = plant_model          # injected SQLAlchemy model class
-        self.model = None                 # your embedding model if you load it here
+    def __init__(self, plant_model, remedy_model=None):
+        self.Plant = plant_model
+        self.Remedy = remedy_model
+        self.model = None
         self.plant_embeddings = {}
         self.remedy_templates = self._load_remedy_templates()
 
@@ -127,6 +128,22 @@ class RAGService:
             logger.error(f"Error retrieving relevant plants: {str(e)}")
             return []
 
+    def get_relevant_remedies(self, processed_query: dict, limit: int = 3):
+        """Return a list of Remedy model instances best matching symptom/phrases."""
+        try:
+            Remedy = self.Remedy
+            if Remedy is None:
+                return []
+            terms = (processed_query.get("symptoms") or []) + (processed_query.get("key_phrases") or [])
+            q = Remedy.query
+            if terms:
+                conds = [Remedy.symptom.ilike(f"%{t}%") for t in terms]
+                q = q.filter(or_(*conds))
+            return q.order_by(Remedy.id.desc()).limit(limit).all()
+        except Exception as e:
+            import logging; logging.getLogger(__name__).error(f"get_relevant_remedies failed: {e}")
+            return []
+
     def _rank_plants_semantically(self, query: str, plants: List) -> List:
         try:
             if not getattr(self, "model", None) or not plants:
@@ -145,14 +162,19 @@ class RAGService:
             return plants
    
     # ------------- RESPONSE GENERATION -------------
-    def generate_response(self, query: str, relevant_plants: List) -> str:
+    def generate_response(self, query: str, relevant_plants: list, remedies: list | None = None) -> str:
         """Accepts models (preferred) or dicts; normalizes internally."""
         try:
+            remedies = remedies or []
             if not relevant_plants:
                 return self._generate_fallback_response(query)
+            
+            intent = self._classify_query_intent(query)
+            if remedies and (intent == "treatment" or (not relevant_plants)):
+                return self._generate_from_remedies(query, remedies)
 
             intent = self._classify_query_intent(query)
-            if intent == 'information' and len(relevant_plants) == 1:
+            if intent == "information" and len(relevant_plants) == 1:
                 return self._generate_plant_info_response(relevant_plants[0])
             elif intent == 'treatment':
                 return self._generate_treatment_response(query, relevant_plants)
@@ -161,6 +183,44 @@ class RAGService:
         except Exception as e:
             logger.error(f"Error generating response: {str(e)}")
             return self._generate_fallback_response(query)
+    
+    def _generate_from_remedies(self, query: str, remedies: list) -> str:
+        """Format a remedy-driven answer."""
+        try:
+            Plant = self.Plant
+            lines = []
+            for r in remedies[:3]:
+                # plant_ids are stored as comma-separated ints (e.g., "1,3,7")
+                ids = []
+                if isinstance(r.plant_ids, str):
+                    ids = [int(x) for x in r.plant_ids.replace(" ", "").split(",") if x.isdigit()]
+                # look up plant names
+                plants = Plant.query.filter(Plant.id.in_(ids)).all() if ids else []
+                plant_names = ", ".join([p.name for p in plants]) if plants else "—"
+                lines.append(
+                    "\n".join(filter(None, [
+                        f"**Symptom:** {r.symptom}",
+                        f"**Suggested Plants:** {plant_names}",
+                        f"**Dosage/Usage:** {r.dosage or '—'}",
+                        f"**Preparation:** {r.preparation_method or '—'}",
+                        f"**Lifestyle:** {r.lifestyle_recommendations or '—'}",
+                        f"**System:** {r.ayush_system or '—'}",
+                    ]))
+                )
+            safety = "\n".join([
+                "• Educational use only — not medical advice.",
+                "• Check allergies, interactions and contraindications.",
+                "• Consult a qualified practitioner for dosing."
+            ])
+            return "\n\n".join([
+                f"Here are traditional recommendations related to **{query}**:",
+                "\n\n---\n\n".join(lines) if lines else "—",
+                "\n**Safety Notes:**\n" + safety
+            ]).strip()
+        except Exception as e:
+            import logging; logging.getLogger(__name__).error(f"_generate_from_remedies failed: {e}")
+            return "I found relevant traditional remedies, but couldn’t format them safely."
+
 
     def _generate_plant_info_response(self, plant) -> str:
         try:
