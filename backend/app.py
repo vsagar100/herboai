@@ -23,11 +23,7 @@ app.config.from_object(Config)
 db = SQLAlchemy(app)
 CORS(app)
 
-# Initialize services
-nlp_service = NLPService()
-vector_service = VectorService()
-rag_service = RAGService()
-embedding_service = EmbeddingService()
+
 multilingual_processor = MultilingualProcessor()
 
 # Configure logging
@@ -98,6 +94,12 @@ class ChatHistory(db.Model):
     ai_response = db.Column(db.Text, nullable=False)
     language = db.Column(db.String(10), default='en')
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+
+# Initialize services
+nlp_service = NLPService()
+vector_service = VectorService()
+embedding_service = EmbeddingService()
+rag_service = RAGService(Plant)
 
 # API Routes
 
@@ -200,54 +202,54 @@ def add_plant():
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
-    """Handle chat queries using RAG pipeline"""
     try:
-        data = request.get_json()
-        user_query = data.get('query', '')
-        language = data.get('language', 'en')
-        session_id = data.get('session_id', 'default')
-        
-        if not user_query:
-            return jsonify({'error': 'Query is required'}), 400
-        
-        # Translate query if not in English
-        if language != 'en':
-            translated_query = multilingual_processor.translate_to_english(user_query, language)
-        else:
-            translated_query = user_query
-        
-        # Process query through NLP pipeline
-        processed_query = nlp_service.process_query(translated_query)
-        
-        # Get relevant plants using RAG
-        relevant_plants = rag_service.get_relevant_plants(processed_query)
-        
-        # Generate response
-        ai_response = rag_service.generate_response(translated_query, relevant_plants)
-        
-        # Translate response back to user's language
-        if language != 'en':
-            ai_response = multilingual_processor.translate_from_english(ai_response, language)
-        
-        # Save to chat history
-        chat_entry = ChatHistory(
-            session_id=session_id,
-            user_query=user_query,
-            ai_response=ai_response,
-            language=language
-        )
-        db.session.add(chat_entry)
-        db.session.commit()
-        
+        payload = request.get_json(force=True) or {}
+        query = payload.get('query', '') or ''
+        language = payload.get('language', 'en')
+        session_id = payload.get('session_id', 'web')
+
+        # 1) Preprocess
+        processed = nlp_service.process_query(query, language=language)
+
+        # 2) Retrieve (models expected)
+        relevant_models = rag_service.get_relevant_plants(processed, limit=5)
+
+        # 3) Generate response (accepts models or dicts, but we pass models)
+        response_text = rag_service.generate_response(query, relevant_models)
+
+        # 4) Prepare JSON-safe plants
+        relevant_out = []
+        for p in relevant_models:
+            if hasattr(p, "to_dict"):
+                relevant_out.append(p.to_dict())
+            elif isinstance(p, dict):
+                relevant_out.append(p)  # already dict
+            else:
+                # ultra-safe fallback
+                relevant_out.append({
+                    "id": getattr(p, "id", None),
+                    "name": getattr(p, "name", ""),
+                    "scientific_name": getattr(p, "scientific_name", ""),
+                    "ayush_system": getattr(p, "ayush_system", ""),
+                    "category": getattr(p, "category", ""),
+                    "uses": getattr(p, "uses", []),
+                    "description": getattr(p, "description", ""),
+                    "preparation": getattr(p, "preparation", ""),
+                    "contraindications": getattr(p, "contraindications", "")
+                })
+
+        # (Optional) log chat_history here safely
+
         return jsonify({
-            'response': ai_response,
-            'relevant_plants': [plant.to_dict() for plant in relevant_plants[:3]],
-            'session_id': session_id
-        })
-        
+            "response": response_text,
+            "relevant_plants": relevant_out,
+            "session_id": session_id
+        }), 200
+
     except Exception as e:
-        logger.error(f"Error processing chat query: {str(e)}")
-        return jsonify({'error': 'Failed to process query'}), 500
+        app.logger.error(f"Error processing chat query: {e}")
+        return jsonify({"error": "Chat processing failed"}), 500
+
 
 @app.route('/api/search', methods=['GET'])
 def search_plants():

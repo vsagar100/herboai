@@ -74,7 +74,7 @@ class NLPService:
             'brahmi': ['brahmi', 'bacopa', 'water hyssop']
         }
     
-    def process_query(self, query: str) -> Dict:
+    def process_query(self, query: str, language: str = "en", **kwargs) -> Dict:
         """Process user query and extract relevant information"""
         try:
             # Clean and normalize query

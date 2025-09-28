@@ -1,22 +1,246 @@
 import json
 import logging
-from typing import List, Dict, Tuple
+from typing import List, Dict
 from sentence_transformers import SentenceTransformer
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
-
+from sqlalchemy import or_ 
 logger = logging.getLogger(__name__)
 
 class RAGService:
     """Retrieval-Augmented Generation service for herbal knowledge"""
     
-    def __init__(self):
-        self.model = None
+    def __init__(self, plant_model):
+        self.Plant = plant_model          # injected SQLAlchemy model class
+        self.model = None                 # your embedding model if you load it here
         self.plant_embeddings = {}
         self.remedy_templates = self._load_remedy_templates()
-        self.safety_guidelines = self._load_safety_guidelines()
-        self._load_embedding_model()
-    
+
+    def _uses_list(self, val):
+        """Return uses as a clean list no matter the source type."""
+        if not val:
+            return []
+        if isinstance(val, list):
+            return val
+        if isinstance(val, str):
+            # try JSON first
+            try:
+                j = json.loads(val)
+                if isinstance(j, list):
+                    return j
+            except Exception:
+                pass
+            # fallback: split by '|' or ','
+            parts = [p.strip() for p in val.replace("|", ",").split(",")]
+            return [p for p in parts if p]
+        return []
+
+    def _properties_dict(self, val):
+        if not val:
+            return {}
+        if isinstance(val, dict):
+            return val
+        if isinstance(val, str):
+            try:
+                j = json.loads(val)
+                return j if isinstance(j, dict) else {}
+            except Exception:
+                return {}
+        return {}
+
+    def _to_view(self, p):
+        """
+        Accepts either a SQLAlchemy Plant instance or a dict,
+        returns a normalized dict with consistent keys.
+        """
+        if isinstance(p, dict):
+            name = p.get("name")
+            sci = p.get("scientific_name")
+            return {
+                "id": p.get("id"),
+                "name": name or "",
+                "scientific_name": sci or "",
+                "ayush_system": p.get("ayush_system") or "",
+                "category": p.get("category") or "",
+                "uses": self._uses_list(p.get("uses")),
+                "description": p.get("description") or "",
+                "preparation": p.get("preparation") or "",
+                "contraindications": p.get("contraindications") or "",
+                "properties": self._properties_dict(p.get("properties")),
+                "image_path": p.get("image_path") or "",
+            }
+        # assume model
+        return {
+            "id": getattr(p, "id", None),
+            "name": getattr(p, "name", "") or "",
+            "scientific_name": getattr(p, "scientific_name", "") or "",
+            "ayush_system": getattr(p, "ayush_system", "") or "",
+            "category": getattr(p, "category", "") or "",
+            "uses": self._uses_list(getattr(p, "uses", None)),
+            "description": getattr(p, "description", "") or "",
+            "preparation": getattr(p, "preparation", "") or "",
+            "contraindications": getattr(p, "contraindications", "") or "",
+            "properties": self._properties_dict(getattr(p, "properties", None)),
+            "image_path": getattr(p, "image_path", "") or "",
+        }
+
+    # ------------- MAIN RETRIEVAL -------------
+    def get_relevant_plants(self, processed_query: Dict, limit: int = 5) -> List:
+        """
+        Return SQLAlchemy Plant model instances (NOT dicts).
+        """
+        try:
+            Plant = self.Plant
+            symptoms = processed_query.get('symptoms', []) or []
+            herbs = processed_query.get('herbs', []) or []
+            ayush_system = processed_query.get('ayush_system')
+            key_phrases = processed_query.get('key_phrases', []) or []
+
+            query = Plant.query
+            if ayush_system:
+                query = query.filter(Plant.ayush_system.ilike(f"%{ayush_system}%"))
+
+            terms = symptoms + herbs + key_phrases
+            if terms:
+                conds = []
+                for t in terms:
+                    conds.extend([
+                        Plant.name.ilike(f"%{t}%"),
+                        Plant.scientific_name.ilike(f"%{t}%"),
+                        Plant.description.ilike(f"%{t}%"),
+                        Plant.category.ilike(f"%{t}%"),
+                        Plant.uses.ilike(f"%{t}%"),
+                    ])
+                query = query.filter(or_(*conds))
+
+            candidates = query.limit(limit * 2).all()
+
+            # (Optional) semantic ranking if you wired an embedding model
+            if getattr(self, "model", None) and candidates:
+                return self._rank_plants_semantically(
+                    processed_query.get("cleaned_query") or "",
+                    candidates
+                )[:limit]
+
+            return candidates[:limit]
+
+        except Exception as e:
+            logger.error(f"Error retrieving relevant plants: {str(e)}")
+            return []
+
+    def _rank_plants_semantically(self, query: str, plants: List) -> List:
+        try:
+            if not getattr(self, "model", None) or not plants:
+                return plants
+            texts = []
+            for p in plants:
+                v = self._to_view(p)
+                texts.append(f"{v['name']} {v['description']} {' '.join(v['uses'])} {v['category']}")
+            q_emb = self.model.encode([query])
+            p_emb = self.model.encode(texts)
+            sims = cosine_similarity(q_emb, p_emb)[0]
+            order = np.argsort(sims)[::-1]
+            return [plants[i] for i in order]
+        except Exception as e:
+            logger.error(f"Error in semantic ranking: {str(e)}")
+            return plants
+   
+    # ------------- RESPONSE GENERATION -------------
+    def generate_response(self, query: str, relevant_plants: List) -> str:
+        """Accepts models (preferred) or dicts; normalizes internally."""
+        try:
+            if not relevant_plants:
+                return self._generate_fallback_response(query)
+
+            intent = self._classify_query_intent(query)
+            if intent == 'information' and len(relevant_plants) == 1:
+                return self._generate_plant_info_response(relevant_plants[0])
+            elif intent == 'treatment':
+                return self._generate_treatment_response(query, relevant_plants)
+            else:
+                return self._generate_general_response(query, relevant_plants)
+        except Exception as e:
+            logger.error(f"Error generating response: {str(e)}")
+            return self._generate_fallback_response(query)
+
+    def _generate_plant_info_response(self, plant) -> str:
+        try:
+            v = self._to_view(plant)
+            uses = v["uses"]
+            props = v["properties"]
+            return "\n".join([
+                f"**{v['name']}** ({v['scientific_name']})",
+                f"**Traditional System:** {v['ayush_system']}",
+                f"**Category:** {v['category']}",
+                "",
+                "**Description:**",
+                v["description"] or "—",
+                "",
+                "**Traditional Uses:**",
+                ("• " + "\n• ".join(uses)) if uses else "—",
+                "",
+                f"**Properties:** {', '.join(f'{k}: {val}' for k, val in props.items())}" if props else "**Properties:** —",
+                "",
+                "**Preparation Methods:**",
+                v["preparation"] or "—",
+                "",
+                "**Safety Notes:**",
+                (v["contraindications"] or "—") + "\n• Educational use only — not medical advice."
+            ])
+        except Exception as e:
+            logger.error(f"Error generating plant info response: {str(e)}")
+            return "I found information on this plant, but couldn't format details safely."
+
+    def _generate_treatment_response(self, query: str, plants: List) -> str:
+        try:
+            def line(p):
+                v = self._to_view(p)
+                uses = v["uses"]
+                return (
+                    f"**{v['name']}** ({v['scientific_name']}) — "
+                    f"Uses: {', '.join(uses[:3]) if uses else '—'}; "
+                    f"{(v['description'][:100] + '...') if v['description'] else ''}"
+                )
+            body = "\n".join(f"{i+1}. {line(p)}" for i, p in enumerate(plants[:3]))
+            return "\n".join([
+                f"For **{query}**, consider these traditional options:",
+                body or "—",
+                "",
+                "**Preparation Examples:**",
+                "\n".join([f"• {self._to_view(p)['name']}: {self._to_view(p)['preparation'][:100]}..." for p in plants[:3] if self._to_view(p)['preparation']]) or "—",
+                "",
+                "**Safety Notes:**",
+                "• Educational use only — not medical advice.",
+                "• Check allergies and drug interactions.",
+                "• Consult a qualified practitioner for dosing."
+            ])
+        except Exception as e:
+            logger.error(f"Error generating treatment response: {str(e)}")
+            return "Please consult a qualified practitioner for personalized treatment guidance."
+
+    def _generate_general_response(self, query: str, plants: List) -> str:
+        try:
+            bullets = []
+            for p in plants[:3]:
+                v = self._to_view(p)
+                bullets.append(
+                    f"• **{v['name']}** — {(v['description'][:110] + '...') if v['description'] else ''} "
+                    f"{'(uses: ' + ', '.join(v['uses'][:2]) + ')' if v['uses'] else ''}"
+                )
+            return "\n".join([
+                f"Here’s what I found related to **{query}**:",
+                *(bullets or ["—"]),
+                "",
+                "**Safety Notes:**",
+                "• Educational use only — not medical advice.",
+                "• Consult a qualified practitioner."
+            ])
+        except Exception as e:
+            logger.error(f"Error generating general response: {str(e)}")
+            return "I found some relevant herbal information, but please consult with a qualified practitioner."
+
+    ###############################################################################################################
+
     def _load_embedding_model(self):
         """Load sentence transformer model for embeddings"""
         try:
@@ -111,54 +335,44 @@ Would you like more specific information about any of these herbs or their prepa
     def get_relevant_plants(self, processed_query: Dict, limit: int = 5) -> List:
         """Retrieve relevant plants based on processed query"""
         try:
-            # Import here to avoid circular imports
-            from flask import current_app
-            from app import Plant, db
-            
+            Plant = self.Plant  # <-- take from constructor
+
             # Extract search criteria
-            symptoms = processed_query.get('symptoms', [])
-            herbs = processed_query.get('herbs', [])
+            symptoms = processed_query.get('symptoms', []) or []
+            herbs = processed_query.get('herbs', []) or []
             ayush_system = processed_query.get('ayush_system')
-            key_phrases = processed_query.get('key_phrases', [])
-            
+            key_phrases = processed_query.get('key_phrases', []) or []
+
             # Build query
             query = Plant.query
-            
+
             # Filter by AYUSH system if specified
             if ayush_system:
                 query = query.filter(Plant.ayush_system.ilike(f'%{ayush_system}%'))
-            
-            # Text-based search
-            search_terms = symptoms + herbs + key_phrases
+
+            # Text-based search across columns
+            search_terms = (symptoms + herbs + key_phrases)
             if search_terms:
                 conditions = []
                 for term in search_terms:
                     conditions.extend([
                         Plant.name.ilike(f'%{term}%'),
+                        Plant.scientific_name.ilike(f'%{term}%'),
                         Plant.description.ilike(f'%{term}%'),
                         Plant.uses.ilike(f'%{term}%'),
                         Plant.category.ilike(f'%{term}%')
                     ])
-                
                 if conditions:
-                    query = query.filter(db.or_(*conditions))
-            
-            plants = query.limit(limit * 2).all()  # Get more for semantic filtering
-            
-            # Apply semantic ranking if embedding model is available
-            if self.model and plants:
-                ranked_plants = self._rank_plants_semantically(
-                    processed_query['cleaned_query'], 
-                    plants
-                )
-                return ranked_plants[:limit]
-            
-            return plants[:limit]
-            
+                    query = query.filter(or_(*conditions))  # <-- not db.or_
+
+            # Limit
+            results = query.limit(limit).all()
+            return [p.to_dict() for p in results]
+
         except Exception as e:
             logger.error(f"Error retrieving relevant plants: {str(e)}")
             return []
-    
+            
     def _rank_plants_semantically(self, query: str, plants: List) -> List:
         """Rank plants using semantic similarity"""
         try:
@@ -186,137 +400,19 @@ Would you like more specific information about any of these herbs or their prepa
             logger.error(f"Error in semantic ranking: {str(e)}")
             return plants
     
-    def generate_response(self, query: str, relevant_plants: List) -> str:
-        """Generate comprehensive response using retrieved plants"""
-        try:
-            if not relevant_plants:
-                return self._generate_fallback_response(query)
-            
-            # Determine response type based on query
-            intent = self._classify_query_intent(query)
-            
-            if intent == 'information' and len(relevant_plants) == 1:
-                return self._generate_plant_info_response(relevant_plants[0])
-            elif intent == 'treatment':
-                return self._generate_treatment_response(query, relevant_plants)
-            else:
-                return self._generate_general_response(query, relevant_plants)
-                
-        except Exception as e:
-            logger.error(f"Error generating response: {str(e)}")
-            return self._generate_fallback_response(query)
-    
     def _classify_query_intent(self, query: str) -> str:
-        """Classify the intent of the query"""
-        query_lower = query.lower()
-        
-        if any(word in query_lower for word in ['what is', 'tell me about', 'information about']):
-            return 'information'
-        elif any(word in query_lower for word in ['cure', 'treatment', 'remedy', 'heal', 'help with']):
-            return 'treatment'
-        elif any(word in query_lower for word in ['how to use', 'dosage', 'preparation']):
-            return 'usage'
-        else:
-            return 'general'
-    
-    def _generate_plant_info_response(self, plant) -> str:
-        """Generate detailed information response for a specific plant"""
-        try:
-            uses = json.loads(plant.uses) if plant.uses else []
-            properties = json.loads(plant.properties) if plant.properties else {}
+            """Classify the intent of the query"""
+            query_lower = query.lower()
             
-            template = self.remedy_templates['information']
-            response = template.format(
-                plant_name=plant.name,
-                scientific_name=plant.scientific_name,
-                system=plant.ayush_system,
-                category=plant.category or 'General',
-                description=plant.description or 'Traditional medicinal plant',
-                uses=self._format_uses(uses),
-                properties=self._format_properties(properties),
-                preparation=plant.preparation or 'Consult with qualified practitioner for preparation methods',
-                contraindications=plant.contraindications or 'Generally safe when used appropriately'
-            )
-            
-            return response.strip()
-            
-        except Exception as e:
-            logger.error(f"Error generating plant info response: {str(e)}")
-            return f"Information about {plant.name} from {plant.ayush_system} tradition."
-    
-    def _generate_treatment_response(self, query: str, plants: List) -> str:
-        """Generate treatment-focused response"""
-        try:
-            # Extract symptom from query
-            symptom = self._extract_main_symptom(query)
-            
-            # Get primary system
-            system = plants[0].ayush_system if plants else 'traditional medicine'
-            
-            # Build plant information
-            plant_info = []
-            for i, plant in enumerate(plants[:3]):  # Top 3 plants
-                uses = json.loads(plant.uses) if plant.uses else []
-                plant_info.append(f"**{i+1}. {plant.name}** ({plant.scientific_name})\n"
-                                f"   - Uses: {', '.join(uses[:3])}\n"
-                                f"   - {plant.description[:100]}...")
-            
-            # Combine preparation methods
-            preparations = []
-            for plant in plants[:3]:
-                if plant.preparation:
-                    preparations.append(f"• {plant.name}: {plant.preparation[:100]}...")
-            
-            template = self.remedy_templates['treatment']
-            response = template.format(
-                system=system,
-                symptom=symptom,
-                plant_info='\n\n'.join(plant_info),
-                preparation='\n'.join(preparations) if preparations else 'Consult qualified practitioner for preparation methods'
-            )
-            
-            return response.strip()
-            
-        except Exception as e:
-            logger.error(f"Error generating treatment response: {str(e)}")
-            return "Please consult with a qualified healthcare provider for treatment advice."
-    
-    def _generate_general_response(self, query: str, plants: List) -> str:
-        """Generate general informational response"""
-        try:
-            # Build relevant information
-            relevant_info = []
-            for plant in plants[:3]:
-                uses = json.loads(plant.uses) if plant.uses else []
-                relevant_info.append(f"**{plant.name}**: {plant.description[:100]}... "
-                                   f"Traditional uses include {', '.join(uses[:2])}.")
-            
-            # Build recommendations
-            recommendations = []
-            for plant in plants[:2]:
-                recommendations.append(f"• Consider {plant.name} for its traditional benefits")
-            
-            # Add safety notes
-            safety_notes = [
-                "• Always consult healthcare provider before use",
-                "• Start with small doses to test tolerance",
-                "• Be aware of potential interactions with medications"
-            ]
-            
-            template = self.remedy_templates['general']
-            response = template.format(
-                query=query,
-                relevant_info='\n\n'.join(relevant_info),
-                recommendations='\n'.join(recommendations),
-                safety_notes='\n'.join(safety_notes)
-            )
-            
-            return response.strip()
-            
-        except Exception as e:
-            logger.error(f"Error generating general response: {str(e)}")
-            return "I found some relevant herbal information, but please consult with a qualified practitioner."
-    
+            if any(word in query_lower for word in ['what is', 'tell me about', 'information about']):
+                return 'information'
+            elif any(word in query_lower for word in ['cure', 'treatment', 'remedy', 'heal', 'help with']):
+                return 'treatment'
+            elif any(word in query_lower for word in ['how to use', 'dosage', 'preparation']):
+                return 'usage'
+            else:
+                return 'general'
+     
     def _generate_fallback_response(self, query: str) -> str:
         """Generate fallback response when no relevant plants found"""
         return f"""I understand you're asking about "{query}". While I don't have specific information in my current database, I recommend:
