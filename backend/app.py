@@ -7,6 +7,10 @@ import json
 import re
 import logging
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
+from math import ceil
+import json
+from datetime import datetime
 
 # Import custom modules
 from services.nlp_service import NLPService
@@ -41,6 +45,21 @@ def allowed_file(filename: str) -> bool:
 _slug_re = re.compile(r"[^a-z0-9]+")
 def plant_slug(name: str) -> str:
     return _slug_re.sub("-", (name or "").lower()).strip("-")
+
+def _uses_json_text(val):
+    # Accept list/string; return JSON-string for TEXT column
+    if isinstance(val, str):
+        try:
+            j = json.loads(val)
+            if isinstance(j, list):
+                return json.dumps(j, ensure_ascii=False)
+        except Exception:
+            pass
+        parts = [p.strip() for p in val.replace("|", ",").split(",") if p.strip()]
+        return json.dumps(parts, ensure_ascii=False)
+    if isinstance(val, list):
+        return json.dumps(val, ensure_ascii=False)
+    return json.dumps([], ensure_ascii=False)
 
 # Database Models
 class Plant(db.Model):
@@ -173,44 +192,53 @@ def get_plant(plant_id):
         logger.error(f"Error fetching plant {plant_id}: {str(e)}")
         return jsonify({'error': 'Plant not found'}), 404
 
-@app.route('/api/plants', methods=['POST'])
-def add_plant():
-    """Add a new plant (admin only)"""
-    try:
-        data = request.get_json()
-        
-        # Validate required fields
-        required_fields = ['name', 'scientific_name', 'ayush_system']
-        for field in required_fields:
-            if field not in data:
-                return jsonify({'error': f'Missing required field: {field}'}), 400
-        
-        plant = Plant(
-            name=data['name'],
-            scientific_name=data['scientific_name'],
-            ayush_system=data['ayush_system'],
-            category=data.get('category', ''),
-            uses=json.dumps(data.get('uses', [])),
-            preparation=data.get('preparation', ''),
-            contraindications=data.get('contraindications', ''),
-            image_path=data.get('image_path', ''),
-            description=data.get('description', ''),
-            properties=json.dumps(data.get('properties', {}))
-        )
-        
-        db.session.add(plant)
-        db.session.commit()
-        
-        # Generate embeddings for the new plant
-        embedding_service.generate_plant_embeddings(plant)
-        
-        logger.info(f"Added new plant: {plant.name}")
-        return jsonify(plant.to_dict()), 201
-        
-    except Exception as e:
-        logger.error(f"Error adding plant: {str(e)}")
-        db.session.rollback()
-        return jsonify({'error': 'Failed to add plant'}), 500
+@app.post("/api/plants")
+def create_plant():
+    data = request.get_json(force=True) or {}
+    p = Plant(
+        name=data.get("name","").strip(),
+        scientific_name=data.get("scientific_name","").strip(),
+        ayush_system=data.get("ayush_system","").strip() or "Ayurveda",
+        category=data.get("category","").strip(),
+        uses=_uses_json_text(data.get("uses")),
+        preparation=data.get("preparation"),
+        contraindications=data.get("contraindications"),
+        image_path=data.get("image_path"),
+        description=data.get("description"),
+        properties=json.dumps(data.get("properties") or {}, ensure_ascii=False),
+        created_at=datetime.utcnow(), updated_at=datetime.utcnow()
+    )
+    db.session.add(p); db.session.commit()
+    return jsonify(p.to_dict()), 201
+    
+@app.put("/api/plants/<int:pid>")
+def update_plant(pid):
+    data = request.get_json(force=True) or {}
+    p = Plant.query.get_or_404(pid)
+    p.name = data.get("name", p.name)
+    p.scientific_name = data.get("scientific_name", p.scientific_name)
+    p.ayush_system = data.get("ayush_system", p.ayush_system)
+    p.category = data.get("category", p.category)
+    p.uses = _uses_json_text(data.get("uses", p.uses))
+    p.preparation = data.get("preparation", p.preparation)
+    p.contraindications = data.get("contraindications", p.contraindications)
+    p.image_path = data.get("image_path", p.image_path)
+    p.description = data.get("description", p.description)
+    if "properties" in data:
+      try:
+        p.properties = json.dumps(data.get("properties") or {}, ensure_ascii=False)
+      except Exception:
+        pass
+    p.updated_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify(p.to_dict())
+
+@app.delete("/api/plants/<int:pid>")
+def delete_plant(pid):
+    p = Plant.query.get_or_404(pid)
+    db.session.delete(p)
+    db.session.commit()
+    return jsonify({"ok": True})
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
