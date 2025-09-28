@@ -31,8 +31,7 @@ class RAGService:
             except Exception:
                 pass
             # fallback: split by '|' or ','
-            parts = [p.strip() for p in val.replace("|", ",").split(",")]
-            return [p for p in parts if p]
+            return [p.strip() for p in val.replace("|", ",").split(",") if p.strip()]
         return []
 
     def _properties_dict(self, val):

@@ -16,6 +16,14 @@ const categories = [
   "Metabolic","Antioxidant"
 ];
 
+const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "http://localhost:5000";
+const resolveImageUrl = (path) => {
+  if (!path) return "";
+  if (/^https?:\/\//i.test(path)) return path; // already absolute
+  return `${API_ORIGIN}${path.startsWith("/") ? "" : "/"}${path}`;
+};
+
+
 export default function PlantLibrary() {
   const [state] = useGlobalState();
   const t = translations[state.language] || translations.en;
@@ -113,8 +121,25 @@ export default function PlantLibrary() {
                   transition={{ delay: idx * 0.05 }}
                   className="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl"
                 >
-                  <div className="h-44 bg-gradient-to-r from-green-400 to-emerald-500 flex items-center justify-center">
-                    <Leaf className="w-16 h-16 text-white" />
+                  <div className="h-44 bg-gray-100 relative overflow-hidden">
+                    {p.image_path ? (
+                      <img
+                        src={resolveImageUrl(p.image_path)}
+                        alt={p.name}
+                        loading="lazy"
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.src = ""; // remove broken src so fallback shows
+                          e.currentTarget.closest(".h-44").classList.add("bg-gradient-to-r","from-green-400","to-emerald-500","flex","items-center","justify-center");
+                          e.currentTarget.replaceWith(document.createElement("div")); // hide the broken img
+                        }}
+                      />
+                    ) : (
+                      <div className="h-full w-full bg-gradient-to-r from-green-400 to-emerald-500 flex items-center justify-center">
+                        <Leaf className="w-16 h-16 text-white" />
+                      </div>
+                    )}
                   </div>
                   <div className="p-6">
                     <div className="flex items-center justify-between mb-2">

@@ -4,6 +4,7 @@ from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 import os
 import json
+import re
 import logging
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -16,12 +17,15 @@ from utils.multilingual import MultilingualProcessor
 from config.settings import Config
 
 # Initialize Flask app
-app = Flask(__name__)
+app = Flask(__name__, static_folder="static", static_url_path="/static")
 app.config.from_object(Config)
 
 # Initialize extensions
 db = SQLAlchemy(app)
 CORS(app)
+
+UPLOAD_DIR = os.path.join(app.root_path, "static", "plant_images")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 multilingual_processor = MultilingualProcessor()
@@ -29,6 +33,14 @@ multilingual_processor = MultilingualProcessor()
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "gif"}
+def allowed_file(filename: str) -> bool:
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+_slug_re = re.compile(r"[^a-z0-9]+")
+def plant_slug(name: str) -> str:
+    return _slug_re.sub("-", (name or "").lower()).strip("-")
 
 # Database Models
 class Plant(db.Model):
@@ -303,6 +315,32 @@ def get_remedies():
     except Exception as e:
         logger.error(f"Error fetching remedies: {str(e)}")
         return jsonify({'error': 'Failed to fetch remedies'}), 500
+
+
+@app.post("/api/admin/plant/<int:plant_id>/image")
+def upload_plant_image(plant_id):
+    if "file" not in request.files:
+        return jsonify({"error": "No file"}), 400
+    file = request.files["file"]
+    if not file or file.filename == "":
+        return jsonify({"error": "Empty filename"}), 400
+    if not allowed_file(file.filename):
+        return jsonify({"error": "Invalid extension"}), 400
+
+    plant = Plant.query.get_or_404(plant_id)
+    ext = file.filename.rsplit(".", 1)[1].lower()
+    # filename: turmeric.jpg (slug of plant name)
+    filename = secure_filename(f"{plant_slug(plant.name)}.{ext}")
+    fs_path = os.path.join(UPLOAD_DIR, filename)
+    # If replacing, optionally delete old file here
+    file.save(fs_path)
+
+    web_path = f"/static/plant_images/{filename}"
+    plant.image_path = web_path
+    plant.updated_at = datetime.utcnow()
+    db.session.commit()
+
+    return jsonify({"ok": True, "image_path": web_path, "plant": plant.to_dict()}), 200
 
 @app.route('/api/admin/analytics', methods=['GET'])
 def get_analytics():
