@@ -37,6 +37,8 @@ app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
 ADMIN_PASS = os.environ.get("ADMIN_PASS", "admin123")
 
+SESSIONS = {} 
+
 multilingual_processor = MultilingualProcessor()
 translation_service = TranslationService()
 
@@ -283,39 +285,66 @@ def delete_plant(pid):
 def chat():
     try:
         payload = request.get_json(force=True) or {}
-        query = payload.get('query', '') or ''
-        language = payload.get('language', 'en')
-        session_id = payload.get('session_id', 'web')
+        user_query = (payload.get('query') or '').strip()
+        language   = (payload.get('language') or 'en').lower()
+        session_id = payload.get('session_id') or 'web'
 
-        # 1) Preprocess
-        processed = nlp_service.process_query(query, language=language)
-        plants = rag_service.get_relevant_plants(processed, limit=5)
-        remedies = rag_service.get_relevant_remedies(processed, limit=3)
-        response_text = rag_service.generate_response(query, plants, remedies=remedies)
-        translated = translation_service.translate_out(response_text, target_lang=language, source_lang="en")
+        if not user_query:
+            return jsonify({"response": "Ask me about a symptom or a plant.", "relevant_plants": []}), 200
 
-      
+        # 1) IN → EN for retrieval
+        eng_query = translation_service.translate_in(user_query, source_lang=language) or user_query
 
-        # 4) Prepare JSON-safe plants
-        plant_json = [p.to_dict() if hasattr(p, "to_dict") else p for p in plants[:5]]
-        remedy_json = []
-        for r in remedies:
-            remedy_json.append({
-                "id": r.id,
-                "symptom": r.symptom,
-                "diagnosis_pattern": r.diagnosis_pattern,
-                "plant_ids": r.plant_ids,
-                "dosage": r.dosage,
-                "lifestyle_recommendations": r.lifestyle_recommendations,
-                "preparation_method": r.preparation_method,
-                "ayush_system": r.ayush_system,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-            })
+        # 2) NLP (always a dict with the keys we use)
+        processed = nlp_service.process_query(eng_query, language='en') or {}
+        if not isinstance(processed, dict):
+            processed = {}
+        processed.setdefault("symptoms", [])
+        processed.setdefault("herbs", [])
+        processed.setdefault("key_phrases", [])
+        processed["cleaned_query"] = (processed.get("cleaned_query") or eng_query)
 
-        # (Optional) log chat_history here safely
+        # 3) Add extra HI/MR synonym terms (safe if None)
+        extra_terms = translation_service.normalize_symptom_terms(user_query, lang=language) or []
+        processed["key_phrases"].extend(extra_terms)
+
+        # 4) Context (safe if no previous context)
+        ctx = SESSIONS.get(session_id) or {}
+        if len(user_query.split()) <= 2 and ctx.get("last_terms"):
+            processed["key_phrases"].extend(ctx["last_terms"])
+
+        # 5) Retrieve (always lists)
+        plants   = rag_service.get_relevant_plants(processed, limit=5) or []
+        remedies = rag_service.get_relevant_remedies(processed, limit=3) or []
+
+        # 6) Generate EN response
+        response_en = rag_service.generate_response(eng_query, plants, remedies=remedies or [])
+
+        # 7) EN → user language
+        response_out = translation_service.translate_out(response_en or "", target_lang=language, source_lang="en") or response_en
+
+        # 8) JSON-safe payloads
+        plant_json  = [p.to_dict() if hasattr(p, "to_dict") else p for p in plants[:5]]
+        remedy_json = [{
+            "id": r.id,
+            "symptom": r.symptom,
+            "plant_ids": r.plant_ids,
+            "dosage": r.dosage,
+            "lifestyle_recommendations": r.lifestyle_recommendations,
+            "preparation_method": r.preparation_method,
+            "ayush_system": r.ayush_system
+        } for r in (remedies or [])]
+
+        # 9) Save compact context
+        last_terms = list({*(processed.get("symptoms") or []), *(processed.get("key_phrases") or [])})[:8]
+        SESSIONS[session_id] = {
+            "last_terms": last_terms,
+            "last_lang": language,
+            "last_plants": [getattr(p, "id", None) for p in plants if getattr(p, "id", None)],
+        }
 
         return jsonify({
-            "response": translated,
+            "response": response_out,
             "relevant_plants": plant_json,
             "remedies": remedy_json,
             "session_id": session_id,
@@ -325,7 +354,6 @@ def chat():
     except Exception as e:
         app.logger.error(f"Error processing chat query: {e}")
         return jsonify({"error": "Chat processing failed"}), 500
-
 
 @app.route('/api/search', methods=['GET'])
 def search_plants():

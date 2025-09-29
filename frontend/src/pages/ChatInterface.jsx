@@ -1,11 +1,13 @@
+// src/pages/ChatInterface.jsx
 import React, { useState, useEffect, useRef } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, Send } from "lucide-react";
 import { useGlobalState } from "../store";
 import { translations } from "../i18n";
 import axios from "axios";
 
-const api = axios.create({ baseURL: "http://localhost:5000/api" });
+const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "http://localhost:5000";
+const api = axios.create({ baseURL: `${API_ORIGIN}/api`, withCredentials: true });
 
 export default function ChatInterface() {
   const [state] = useGlobalState();
@@ -14,11 +16,38 @@ export default function ChatInterface() {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+
+  // scrollable list container
   const listRef = useRef(null);
 
+  // banner visibility (title + description)
+  const [showBanner, setShowBanner] = useState(true);
+
+  // keep scrolled to bottom when new messages arrive
   useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
+    listRef.current?.scrollTo({
+      top: listRef.current.scrollHeight,
+      behavior: "smooth",
+    });
   }, [messages]);
+
+  // hide banner when scrolled down; show only at top
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+
+    const onScroll = () => {
+      const atTop = el.scrollTop <= 6; // tiny threshold
+      // If there are no messages yet, keep showing the banner
+      setShowBanner(atTop || messages.length === 0);
+    };
+
+    el.addEventListener("scroll", onScroll, { passive: true });
+    // run once to set initial state correctly
+    onScroll();
+
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [messages.length]);
 
   async function send() {
     if (!text.trim() || sending) return;
@@ -27,29 +56,58 @@ export default function ChatInterface() {
     setText("");
     setSending(true);
     try {
-      const { data } = await api.post("/chat", { query: user.text, language: state.language, session_id: "web" });
+      const { data } = await api.post("/chat", {
+        query: user.text,
+        language: state.language,
+        session_id: "web",
+      });
       const ai = {
         id: user.id + 1,
         sender: "ai",
         text: data.response || "Sorry, something went wrong.",
         relevantPlants: data.relevant_plants || [],
-        timestamp: new Date()
+        timestamp: new Date(),
       };
       setMessages((m) => [...m, ai]);
     } catch {
-      setMessages((m) => [...m, { id: user.id + 1, sender: "ai", text: "I’m having trouble connecting to the server.", timestamp: new Date() }]);
+      setMessages((m) => [
+        ...m,
+        {
+          id: user.id + 1,
+          sender: "ai",
+          text: "I’m having trouble connecting to the server.",
+          timestamp: new Date(),
+        },
+      ]);
     } finally {
       setSending(false);
     }
   }
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col h-[calc(100vh-64px)] bg-gray-50">
-      <div className="bg-white shadow-sm border-b p-6">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">{t.chat.title}</h1>
-        <p className="text-gray-600">{t.chat.description}</p>
-      </div>
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="flex flex-col h-[calc(100vh-64px)] bg-gray-50"
+    >
+      {/* Banner area: visible on load; hides as soon as the list is scrolled */}
+      <AnimatePresence initial={false}>
+        {showBanner && (
+          <motion.div
+            key="chat-banner"
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.2 }}
+            className="bg-white shadow-sm border-b p-6"
+          >
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">{t.chat.title}</h1>
+            <p className="text-gray-600">{t.chat.description}</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
+      {/* Scrollable messages area */}
       <div ref={listRef} className="flex-1 overflow-y-auto p-6">
         <div className="max-w-4xl mx-auto">
           {messages.length === 0 ? (
@@ -57,11 +115,20 @@ export default function ChatInterface() {
               <div className="bg-green-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
                 <MessageCircle className="w-10 h-10 text-green-600" />
               </div>
-              <h3 className="text-xl font-semibold text-gray-900 mb-2">Welcome to HerboAI Assistant</h3>
-              <p className="text-gray-600 mb-6">Ask me anything about medicinal plants, traditional remedies, or herbal treatments.</p>
+              <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                Welcome to HerboAI Assistant
+              </h3>
+              <p className="text-gray-600 mb-6">
+                Ask me anything about medicinal plants, traditional remedies, or herbal
+                treatments.
+              </p>
               <div className="grid md:grid-cols-2 gap-3 max-w-2xl mx-auto">
                 {t.chat.sampleQuestions.map((q, i) => (
-                  <button key={i} onClick={() => setText(q)} className="p-4 text-left bg-white rounded-lg shadow border hover:shadow-md">
+                  <button
+                    key={i}
+                    onClick={() => setText(q)}
+                    className="p-4 text-left bg-white rounded-lg shadow border hover:shadow-md"
+                  >
                     {q}
                   </button>
                 ))}
@@ -70,8 +137,17 @@ export default function ChatInterface() {
           ) : (
             <div className="space-y-6">
               {messages.map((m) => (
-                <div key={m.id} className={`flex ${m.sender === "user" ? "justify-end" : "justify-start"}`}>
-                  <div className={`max-w-lg px-6 py-4 rounded-2xl ${m.sender === "user" ? "bg-green-600 text-white" : "bg-white text-gray-800 shadow"}`}>
+                <div
+                  key={m.id}
+                  className={`flex ${m.sender === "user" ? "justify-end" : "justify-start"}`}
+                >
+                  <div
+                    className={`max-w-lg px-6 py-4 rounded-2xl ${
+                      m.sender === "user"
+                        ? "bg-green-600 text-white"
+                        : "bg-white text-gray-800 shadow"
+                    }`}
+                  >
                     <p className="whitespace-pre-wrap">{m.text}</p>
 
                     {m.relevantPlants?.length > 0 && (
@@ -88,7 +164,11 @@ export default function ChatInterface() {
                       </div>
                     )}
 
-                    <div className={`text-xs mt-2 ${m.sender === "user" ? "text-green-100" : "text-gray-500"}`}>
+                    <div
+                      className={`text-xs mt-2 ${
+                        m.sender === "user" ? "text-green-100" : "text-gray-500"
+                      }`}
+                    >
                       {new Date(m.timestamp).toLocaleTimeString()}
                     </div>
                   </div>
@@ -100,8 +180,14 @@ export default function ChatInterface() {
                   <div className="bg-white px-6 py-4 rounded-2xl shadow">
                     <div className="flex gap-2">
                       <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0.1s" }} />
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0.2s" }} />
+                      <div
+                        className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                        style={{ animationDelay: "0.1s" }}
+                      />
+                      <div
+                        className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                        style={{ animationDelay: "0.2s" }}
+                      />
                     </div>
                   </div>
                 </div>
@@ -111,6 +197,7 @@ export default function ChatInterface() {
         </div>
       </div>
 
+      {/* Composer */}
       <div className="bg-white border-t p-6">
         <div className="max-w-4xl mx-auto flex gap-3">
           <input

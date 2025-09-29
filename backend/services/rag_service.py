@@ -85,47 +85,56 @@ class RAGService:
         }
 
     # ------------- MAIN RETRIEVAL -------------
-    def get_relevant_plants(self, processed_query: Dict, limit: int = 5) -> List:
-        """
-        Return SQLAlchemy Plant model instances (NOT dicts).
-        """
+    def get_relevant_plants(self, processed_query: dict, limit: int = 5) -> list:
         try:
             Plant = self.Plant
-            symptoms = processed_query.get('symptoms', []) or []
-            herbs = processed_query.get('herbs', []) or []
+            symptoms = processed_query.get('symptoms') or []
+            herbs = processed_query.get('herbs') or []
+            key_phrases = processed_query.get('key_phrases') or []
             ayush_system = processed_query.get('ayush_system')
-            key_phrases = processed_query.get('key_phrases', []) or []
+            cleaned = (processed_query.get('cleaned_query') or '').strip()
 
-            query = Plant.query
+            terms = [t for t in (symptoms + herbs + key_phrases) if t]
+
+            q = Plant.query
             if ayush_system:
-                query = query.filter(Plant.ayush_system.ilike(f"%{ayush_system}%"))
+                q = q.filter(Plant.ayush_system.ilike(f"%{ayush_system}%"))
 
-            terms = symptoms + herbs + key_phrases
-            if terms:
-                conds = []
-                for t in terms:
-                    conds.extend([
-                        Plant.name.ilike(f"%{t}%"),
-                        Plant.scientific_name.ilike(f"%{t}%"),
-                        Plant.description.ilike(f"%{t}%"),
-                        Plant.category.ilike(f"%{t}%"),
-                        Plant.uses.ilike(f"%{t}%"),
-                    ])
-                query = query.filter(or_(*conds))
+            # Primary: multi-field keyword OR matches
+            conds = []
+            for t in terms:
+                conds.extend([
+                    Plant.name.ilike(f"%{t}%"),
+                    Plant.scientific_name.ilike(f"%{t}%"),
+                    Plant.description.ilike(f"%{t}%"),
+                    Plant.category.ilike(f"%{t}%"),
+                    Plant.uses.ilike(f"%{t}%"),
+                ])
+            if conds:
+                q = q.filter(or_(*conds))
+                candidates = q.limit(limit * 3).all()
+            else:
+                # Secondary: split cleaned English text into tokens; try softer match
+                toks = [w for w in cleaned.lower().split() if len(w) >= 3]
+                soft = Plant.query
+                if toks:
+                    soft_conds = []
+                    for w in toks[:6]:
+                        soft_conds.extend([
+                            Plant.name.ilike(f"%{w}%"),
+                            Plant.description.ilike(f"%{w}%"),
+                            Plant.uses.ilike(f"%{w}%"),
+                        ])
+                    soft = soft.filter(or_(*soft_conds))
+                candidates = soft.limit(limit * 3).all()
 
-            candidates = query.limit(limit * 2).all()
-
-            # (Optional) semantic ranking if you wired an embedding model
             if getattr(self, "model", None) and candidates:
-                return self._rank_plants_semantically(
-                    processed_query.get("cleaned_query") or "",
-                    candidates
-                )[:limit]
+                return self._rank_plants_semantically(cleaned or " ".join(terms), candidates)[:limit]
 
             return candidates[:limit]
 
         except Exception as e:
-            logger.error(f"Error retrieving relevant plants: {str(e)}")
+            logger.error(f"Error retrieving relevant plants: {e}")
             return []
 
     def get_relevant_remedies(self, processed_query: dict, limit: int = 3):
@@ -390,47 +399,6 @@ Would you like more specific information about any of these herbs or their prepa
                 'Be aware of potential drug interactions'
             ]
         }
-    
-    def get_relevant_plants(self, processed_query: Dict, limit: int = 5) -> List:
-        """Retrieve relevant plants based on processed query"""
-        try:
-            Plant = self.Plant  # <-- take from constructor
-
-            # Extract search criteria
-            symptoms = processed_query.get('symptoms', []) or []
-            herbs = processed_query.get('herbs', []) or []
-            ayush_system = processed_query.get('ayush_system')
-            key_phrases = processed_query.get('key_phrases', []) or []
-
-            # Build query
-            query = Plant.query
-
-            # Filter by AYUSH system if specified
-            if ayush_system:
-                query = query.filter(Plant.ayush_system.ilike(f'%{ayush_system}%'))
-
-            # Text-based search across columns
-            search_terms = (symptoms + herbs + key_phrases)
-            if search_terms:
-                conditions = []
-                for term in search_terms:
-                    conditions.extend([
-                        Plant.name.ilike(f'%{term}%'),
-                        Plant.scientific_name.ilike(f'%{term}%'),
-                        Plant.description.ilike(f'%{term}%'),
-                        Plant.uses.ilike(f'%{term}%'),
-                        Plant.category.ilike(f'%{term}%')
-                    ])
-                if conditions:
-                    query = query.filter(or_(*conditions))  # <-- not db.or_
-
-            # Limit
-            results = query.limit(limit).all()
-            return [p.to_dict() for p in results]
-
-        except Exception as e:
-            logger.error(f"Error retrieving relevant plants: {str(e)}")
-            return []
             
     def _rank_plants_semantically(self, query: str, plants: List) -> List:
         """Rank plants using semantic similarity"""
