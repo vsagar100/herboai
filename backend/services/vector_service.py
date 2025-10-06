@@ -70,7 +70,7 @@ class VectorService:
             text = self._create_plant_text(plant_data)
             
             # Generate embedding
-            embedding = self.model.encode(text)
+            embedding = np.asarray(self.model.encode(text), dtype=np.float32)
             
             # Store in database
             conn = sqlite3.connect(self.vectors_db_path)
@@ -112,7 +112,7 @@ class VectorService:
                 return []
             
             # Generate query embedding
-            query_embedding = self.model.encode(query)
+            query_embedding = np.asarray(self.model.encode(query), dtype=np.float32)
             
             # Get all vectors from database
             conn = sqlite3.connect(self.vectors_db_path)

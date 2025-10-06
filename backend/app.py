@@ -220,8 +220,7 @@ def get_plants():
         logger.error(f"Error fetching plants: {str(e)}")
         return jsonify({'error': 'Failed to fetch plants'}), 500
 
-@admin_required
-@app.route('/api/plants/<int:plant_id>', methods=['GET'])
+@app.get('/api/plants/<int:plant_id>')
 def get_plant(plant_id):
     """Get a specific plant by ID"""
     try:
@@ -232,11 +231,22 @@ def get_plant(plant_id):
         return jsonify({'error': 'Plant not found'}), 404
 
 @app.post("/api/plants")
+@admin_required
 def create_plant():
     data = request.get_json(force=True) or {}
+    name = (data.get("name") or "").strip()
+    scientific_name = (data.get("scientific_name") or "").strip()
+
+    if not name or not scientific_name:
+        return jsonify({"error": "Name and scientific name are required."}), 400
+
+    existing = Plant.query.filter_by(scientific_name=scientific_name).first()
+    if existing:
+        return jsonify({"error": "A plant with this scientific name already exists."}), 409
+
     p = Plant(
-        name=data.get("name","").strip(),
-        scientific_name=data.get("scientific_name","").strip(),
+        name=name,
+        scientific_name=scientific_name,
         ayush_system=data.get("ayush_system","").strip() or "Ayurveda",
         category=data.get("category","").strip(),
         uses=_uses_json_text(data.get("uses")),
@@ -248,15 +258,32 @@ def create_plant():
         created_at=datetime.utcnow(), updated_at=datetime.utcnow()
     )
     db.session.add(p); db.session.commit()
+
+    try:
+        vector_service.add_plant_vector(p.id, p.to_dict())
+    except Exception:
+        logger.warning("Vector sync failed for plant %s", p.id)
+
     return jsonify(p.to_dict()), 201
 
-@admin_required
 @app.put("/api/plants/<int:pid>")
+@admin_required
 def update_plant(pid):
     data = request.get_json(force=True) or {}
     p = Plant.query.get_or_404(pid)
-    p.name = data.get("name", p.name)
-    p.scientific_name = data.get("scientific_name", p.scientific_name)
+    new_name = (data.get("name") or p.name or "").strip() or p.name
+    new_scientific = (data.get("scientific_name") or p.scientific_name or "").strip() or p.scientific_name
+
+    if not new_name or not new_scientific:
+        return jsonify({"error": "Name and scientific name are required."}), 400
+
+    if new_scientific != p.scientific_name:
+        duplicate = Plant.query.filter(Plant.id != pid, Plant.scientific_name == new_scientific).first()
+        if duplicate:
+            return jsonify({"error": "Another plant already uses this scientific name."}), 409
+
+    p.name = new_name
+    p.scientific_name = new_scientific
     p.ayush_system = data.get("ayush_system", p.ayush_system)
     p.category = data.get("category", p.category)
     p.uses = _uses_json_text(data.get("uses", p.uses))
@@ -271,14 +298,23 @@ def update_plant(pid):
         pass
     p.updated_at = datetime.utcnow()
     db.session.commit()
+
+    try:
+        vector_service.update_plant_vector(p.id, p.to_dict())
+    except Exception:
+        logger.warning("Vector sync failed for plant %s", p.id)
     return jsonify(p.to_dict())
 
-@admin_required
 @app.delete("/api/plants/<int:pid>")
+@admin_required
 def delete_plant(pid):
     p = Plant.query.get_or_404(pid)
     db.session.delete(p)
     db.session.commit()
+    try:
+        vector_service.delete_plant_vector(pid)
+    except Exception:
+        logger.warning("Failed to delete vector for plant %s", pid)
     return jsonify({"ok": True})
 
 @app.route('/api/chat', methods=['POST'])
@@ -325,15 +361,28 @@ def chat():
 
         # 8) JSON-safe payloads
         plant_json  = [p.to_dict() if hasattr(p, "to_dict") else p for p in plants[:5]]
-        remedy_json = [{
-            "id": r.id,
-            "symptom": r.symptom,
-            "plant_ids": r.plant_ids,
-            "dosage": r.dosage,
-            "lifestyle_recommendations": r.lifestyle_recommendations,
-            "preparation_method": r.preparation_method,
-            "ayush_system": r.ayush_system
-        } for r in (remedies or [])]
+        remedy_json = []
+        for r in remedies or []:
+            linked_ids: list[int] = []
+            if isinstance(r.plant_ids, str):
+                linked_ids = [int(x) for x in r.plant_ids.replace(" ", "").split(",") if x.isdigit()]
+            elif isinstance(r.plant_ids, list):
+                linked_ids = [int(x) for x in r.plant_ids if isinstance(x, int)]
+
+            plants_for_remedy = []
+            if linked_ids:
+                plants_for_remedy = [plant.to_dict() for plant in Plant.query.filter(Plant.id.in_(linked_ids)).all()]
+
+            remedy_json.append({
+                "id": r.id,
+                "symptom": r.symptom,
+                "plant_ids": linked_ids,
+                "plants": plants_for_remedy,
+                "dosage": r.dosage,
+                "lifestyle_recommendations": r.lifestyle_recommendations,
+                "preparation_method": r.preparation_method,
+                "ayush_system": r.ayush_system,
+            })
 
         # 9) Save compact context
         last_terms = list({*(processed.get("symptoms") or []), *(processed.get("key_phrases") or [])})[:8]
@@ -342,6 +391,19 @@ def chat():
             "last_lang": language,
             "last_plants": [getattr(p, "id", None) for p in plants if getattr(p, "id", None)],
         }
+
+        try:
+            history_entry = ChatHistory(
+                session_id=session_id,
+                user_query=user_query,
+                ai_response=response_out,
+                language=language,
+            )
+            db.session.add(history_entry)
+            db.session.commit()
+        except Exception as exc:
+            db.session.rollback()
+            logger.warning("Failed to persist chat history: %s", exc)
 
         return jsonify({
             "response": response_out,
@@ -410,6 +472,7 @@ def get_remedies():
 
 
 @app.post("/api/admin/plant/<int:plant_id>/image")
+@admin_required
 def upload_plant_image(plant_id):
     if "file" not in request.files:
         return jsonify({"error": "No file"}), 400
@@ -435,6 +498,7 @@ def upload_plant_image(plant_id):
     return jsonify({"ok": True, "image_path": web_path, "plant": plant.to_dict()}), 200
 
 @app.route('/api/admin/analytics', methods=['GET'])
+@admin_required
 def get_analytics():
     """Get system analytics (admin only)"""
     try:
@@ -477,6 +541,7 @@ def get_analytics():
         return jsonify({'error': 'Failed to fetch analytics'}), 500
 
 @app.route('/api/admin/import', methods=['POST'])
+@admin_required
 def import_plants():
     """Import plants from uploaded data (admin only)"""
     try:
@@ -497,17 +562,17 @@ def import_plants():
                     continue
                 
                 plant = Plant(
-                    name=plant_data.get('name'),
-                    scientific_name=plant_data.get('scientific_name'),
+                    name=(plant_data.get('name') or '').strip(),
+                    scientific_name=(plant_data.get('scientific_name') or '').strip(),
                     ayush_system=plant_data.get('ayush_system', 'Ayurveda'),
-                    category=plant_data.get('category', ''),
-                    uses=json.dumps(plant_data.get('uses', [])),
+                    category=(plant_data.get('category') or '').strip(),
+                    uses=_uses_json_text(plant_data.get('uses')),
                     preparation=plant_data.get('preparation', ''),
                     contraindications=plant_data.get('contraindications', ''),
                     description=plant_data.get('description', ''),
-                    properties=json.dumps(plant_data.get('properties', {}))
+                    properties=json.dumps(plant_data.get('properties', {}), ensure_ascii=False)
                 )
-                
+
                 db.session.add(plant)
                 imported_count += 1
                 
@@ -515,7 +580,13 @@ def import_plants():
                 errors.append(f"Error importing {plant_data.get('name', 'unknown')}: {str(e)}")
         
         db.session.commit()
-        
+
+        try:
+            for plant in Plant.query.order_by(Plant.id.desc()).limit(imported_count).all():
+                vector_service.add_plant_vector(plant.id, plant.to_dict())
+        except Exception as exc:
+            logger.warning("Vector sync failed during import: %s", exc)
+
         return jsonify({
             'imported_count': imported_count,
             'errors': errors
@@ -597,7 +668,13 @@ def load_initial_data():
         
         db.session.commit()
         logger.info("Initial data loaded successfully")
-        
+
+        try:
+            for plant in Plant.query.all():
+                vector_service.add_plant_vector(plant.id, plant.to_dict())
+        except Exception as exc:
+            logger.warning("Vector rebuild failed during initial load: %s", exc)
+
     except Exception as e:
         logger.error(f"Error loading initial data: {str(e)}")
         db.session.rollback()
