@@ -1,61 +1,9 @@
-# Core Framework
-Flask==2.3.3
-Flask-SQLAlchemy==3.0.5
-Flask-CORS==4.0.0
-
-# NLP and AI Models - Fixed versions for compatibility
-spacy==3.7.2
-sentence-transformers==2.2.2
-transformers==4.35.2
-torch==2.1.1
-scikit-learn==1.3.2
-numpy==1.24.4
-
-# Text Processing and Language Support
-nltk==3.8.1
-textblob==0.17.1
-regex==2023.10.3
-
-# Vector Database and Search
-chromadb==0.4.15
-faiss-cpu==1.7.4
-hnswlib==0.7.0
-
-# Data Processing
-pandas==2.1.3
-openpyxl==3.1.2
-xlrd==2.0.1
-
-# HTTP and API
-requests==2.31.0
-urllib3==2.1.0
-
-# Configuration and Environment
-python-dotenv==1.0.0
-python-dateutil==2.8.2
-click==8.1.7
-
-# Security
-bcrypt==4.1.1
-Werkzeug==2.3.7
-
-# Logging and Utilities
-structlog==23.2.0
-colorama==0.4.6
-
-# Development and Testing
-pytest==7.4.3
-pytest-cov==4.1.0
-black==23.11.0
-flake8==6.1.0
-
-# Production Server
-gunicorn==21.2.0
-
-# Additional utilities for multilingual support
-# polyglot==16.7.4  # Commented out - causes issues
-# pycld2==0.41      # Commented out - causes issues
-
-# JSON and data validation
-jsonschema==4.19.2
-marshmallow==3.20.1
+# requirements.txt
+Flask==3.0.3
+Flask-Cors==4.0.1
+Flask-JWT-Extended==4.6.0
+SQLAlchemy==2.0.34
+langdetect==1.0.9
+Werkzeug==3.0.3
+requests==2.32.3
+python-dotenv==1.0.1
