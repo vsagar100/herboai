@@ -1,9 +1,9 @@
 # services/nlu.py
 from langdetect import detect
-import re
+import re, unicodedata
 from typing import Literal, Tuple, Optional, List
 from sqlalchemy.orm import Session
-from sqlalchemy import func, literal, or_
+from sqlalchemy import func, literal, or_, text
 from models import Plant, Remedy
 
 Intent = Literal["plant", "condition"]
@@ -62,15 +62,79 @@ SYM_MAP = {
     }
 }
 
+def normalize(s: str) -> str:
+    # NFC keeps Devanagari composed; do not lose Unicode case
+    s = unicodedata.normalize("NFC", s or "")
+    s = s.replace("/", " ")
+    s = re.sub(r"\s+", " ", s).strip()
+    return s.lower()  # lower() is no-op for Devanagari and safe for Latin
+
+def _split_tokens(q_norm: str) -> List[str]:
+    return [t for t in re.split(r"[^0-9A-Za-z\u0900-\u097F]+", q_norm) if t]
+
+def lookup_plant(db: Session, q_norm: str) -> Optional[Plant]:
+    """
+    Deterministic Unicode-safe lookup order:
+      (A) FTS5 MATCH on plant_fts (name, scientific, synonyms, uses, description, properties)
+      (B) Raw SQL LIKE on name/scientific/synonyms with the longest token
+      (C) Python-side contains as a final guardrail
+    Returns actual Plant instance or None.
+    """
+    # ---------- A) FTS5 (best for multilingual / fuzzy) ----------
+    try:
+        tokens = _split_tokens(q_norm)
+        q_fts = " OR ".join(tokens[:6]) if tokens else q_norm
+        row = db.execute(
+            text(
+                """SELECT p.id
+                   FROM plant p
+                   JOIN plant_fts f ON f.rowid = p.id
+                   WHERE plant_fts MATCH :q
+                   ORDER BY length(p.name) DESC
+                   LIMIT 1"""
+            ),
+            {"q": q_fts},
+        ).fetchone()
+        if row:
+            return db.get(Plant, row[0])
+    except Exception as _:
+        pass  # fall through
+
+    # ---------- B) Raw SQL LIKE (no ORM ilike/instr quirks) ----------
+    tokens = _split_tokens(q_norm)
+    longest = max(tokens, key=len) if tokens else q_norm
+    like = f"%{longest}%"
+    row = db.execute(
+        text(
+            """SELECT id FROM plant
+               WHERE coalesce(name,'') LIKE :like
+                  OR coalesce(scientific_name,'') LIKE :like
+                  OR coalesce(synonyms,'') LIKE :like
+               ORDER BY length(name) DESC
+               LIMIT 1"""
+        ),
+        {"like": like},
+    ).fetchone()
+    if row:
+        return db.get(Plant, row[0])
+
+    # ---------- C) Python-side contains (last resort, always works) ----------
+    # lightweight scan; plant table is tiny (dozens/hundreds)
+    for pid, nm, sci, syn in db.query(Plant.id, Plant.name, Plant.scientific_name, Plant.synonyms).all():
+        if not nm and not sci and not syn:
+            continue
+        hay = " ".join([str(nm or ""), str(sci or ""), str(syn or "")]).lower()
+        if q_norm in hay or any(t in hay for t in tokens):
+            return db.get(Plant, pid)
+
+    return None
+################################################################################################################
+
 def detect_lang(text: str) -> str:
     try:
         return detect(text)
     except Exception:
         return "en"
-
-def normalize(s: str) -> str:
-    s = s.replace("/", " ")
-    return re.sub(r"\s+", " ", s).strip().lower()
 
 def _tokens(q_norm: str) -> List[str]:
     toks = re.split(r"[^0-9A-Za-z\u0900-\u097F]+", q_norm)

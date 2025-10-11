@@ -8,6 +8,7 @@ bp = Blueprint("files", __name__, url_prefix="/files")
 def serve_file(filename):
     root = current_app.config["UPLOAD_FOLDER"]
     fpath = os.path.join(root, filename)
+    print("Serving file:", fpath)
     if not os.path.isfile(fpath):
         abort(404)
     directory, name = os.path.split(fpath)

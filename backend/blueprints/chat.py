@@ -92,7 +92,7 @@ def _remedies_payload(remedies, db, target_lang: str) -> dict:
         out.append(item)
     return {"type": "remedies", "items": out, "lang": target_lang}
 
-@bp.post("/query")
+@bp.post("/chat")
 def query():
     try:
         payload = request.get_json(silent=True) or {}

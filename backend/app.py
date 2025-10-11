@@ -19,7 +19,8 @@ load_dotenv()
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Settings)
-    os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
+    #os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
+    print("Upload folder:", app.config["UPLOAD_FOLDER"])
 
     # DB init
     Base.metadata.create_all(bind=engine)

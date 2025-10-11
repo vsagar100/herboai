@@ -9,7 +9,7 @@ _model = None
 _index = None
 _id_map = None
 
-def load_index(model_path="all-MiniLM-L6-v2", index_path="semantic.idx", idmap_path="semantic.ids"):
+def load_indexes(model_path="all-MiniLM-L6-v2", index_path="semantic.idx", idmap_path="semantic.ids"):
     global _model, _index, _id_map
     _model = SentenceTransformer(model_path)
     if os.path.exists(index_path) and os.path.exists(idmap_path):

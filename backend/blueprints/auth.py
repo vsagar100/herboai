@@ -1,5 +1,6 @@
 # blueprints/auth.py
 from flask import Blueprint, request, jsonify
+from flask_jwt_extended import jwt_required, get_jwt_identity
 from werkzeug.security import check_password_hash
 from database import get_session
 from models import AdminUser
@@ -22,3 +23,16 @@ def login():
 
     token = create_access_token(identity=user.id)
     return jsonify({"token": token})
+
+@bp.get("/me")
+@jwt_required()
+def me():
+    user_id = get_jwt_identity()
+    db = next(get_session())
+    user = db.query(AdminUser).filter_by(id=user_id).first()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    return jsonify({
+        "id": user.id,
+        "username": user.username
+    })
