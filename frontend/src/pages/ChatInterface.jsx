@@ -5,9 +5,18 @@ import { MessageCircle, Send, Download, FileText, FileJson, FileImage } from "lu
 import { useGlobalState } from "../store";
 import { translations } from "../i18n";
 import axios from "axios";
+import PlantModal from "../components/PlantModal";
 
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "http://localhost:5000";
 const api = axios.create({ baseURL: `${API_ORIGIN}/api`, withCredentials: true });
+
+const resolveImageUrl = (path) => {
+     if (!path) return "";
+     if (/^https?:\/\//i.test(path)) return path;
+     const cleanPath = path.startsWith("/") ? path.slice(1) : path;
+     // backend serves via /files/ for relative paths
+     return `${API_ORIGIN}/${cleanPath.startsWith("files/") ? cleanPath : `files/${cleanPath}`}`;
+   };
 
 export default function ChatInterface() {
   const [state] = useGlobalState();
@@ -16,6 +25,7 @@ export default function ChatInterface() {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [selectedPlant, setSelectedPlant] = useState(null);
 
   const listRef = useRef(null);
   const [showBanner, setShowBanner] = useState(true);
@@ -50,17 +60,12 @@ export default function ChatInterface() {
     content += `${"=".repeat(60)}\n\n`;
     content += message.text.replace(/\*\*/g, '').replace(/_/g, '') + '\n\n';
     
-    if (message.relevantPlants?.length > 0) {
-      content += `${"=".repeat(60)}\n`;
+    if (message.relevantPlants?.length) {
       content += `Related Plants:\n`;
-      content += `${"=".repeat(60)}\n\n`;
-      message.relevantPlants.forEach((plant, idx) => {
-        content += `${idx + 1}. ${plant.name}\n`;
-        if (plant.scientific_name) {
-          content += `   Scientific Name: ${plant.scientific_name}\n`;
-        }
-        content += '\n';
-      });
+      for (const p of message.relevantPlants) {
+        content += ` - ${p.name}${p.scientific_name ? ` (${p.scientific_name})` : ""}\n`;
+      }
+      content += `\n`;
     }
     
     content += `\n${"=".repeat(60)}\n`;
@@ -286,9 +291,11 @@ export default function ChatInterface() {
     setSending(true);
 
     try {
+      const prevUser = [...messages].reverse().find(m => m.sender === "user");
       const { data } = await api.post("/chat", {
         text: user.text,
         lang: state.language,
+        context: prevUser ? prevUser.text : undefined
       });
 
       let responseText = "";
@@ -403,7 +410,11 @@ export default function ChatInterface() {
         // No results found
         responseText = data.message || "Sorry, I couldn't find any information about that.";
 
-      } else {
+      } else if (data.type === "answer") {
+        responseText = data.text || "I found some relevant information.";
+        relevantPlants = data.plants || [];
+      } 
+      else {
         // Unexpected format
         responseText = "I received your query but couldn't format the response properly.";
         console.error("Unexpected response format:", data);
@@ -433,6 +444,15 @@ export default function ChatInterface() {
       setSending(false);
     }
   }
+
+  const handlePlantClick = async (id) => {
+  try {
+    const { data } = await api.get(`/plants/${id}`);
+    setSelectedPlant(data);
+  } catch (err) {
+    console.error("Failed to load plant details:", err);
+  }
+};
 
   return (
     <motion.div
@@ -517,26 +537,39 @@ export default function ChatInterface() {
                           <p className="text-sm font-medium text-gray-600 mb-2">
                             {m.relevantPlants.length === 1 ? 'Related Plant:' : 'Related Plants:'}
                           </p>
-                          <div className="space-y-2">
-                            {m.relevantPlants.map((p) => (
-                              <div key={p.id} className="bg-gray-50 rounded-lg p-3 flex items-center gap-3">
-                                {p.images?.[0] && (
-                                  <img 
-                                    src={`${API_ORIGIN}/files/${p.images[0].path}`}
-                                    alt={p.images[0].alt || p.name}
-                                    className="w-12 h-12 rounded object-cover"
-                                    onError={(e) => e.target.style.display = 'none'}
-                                  />
-                                )}
-                                <div className="flex-1">
-                                  <div className="font-medium text-gray-800">{p.name}</div>
-                                  {p.scientific_name && (
-                                    <div className="text-sm text-gray-600 italic">{p.scientific_name}</div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {m.relevantPlants.map((p) => {
+                              const img = p.images?.[0]?.path || p.images?.[0]?.file_path || p.image_path || "";
+                              return (
+                                <button
+                                  key={p.id}
+                                 // onClick={() => setSelectedPlant(p)}
+                                  onClick={() => handlePlantClick(p.id)}
+                                  className="bg-gray-50 hover:bg-gray-100 rounded-lg p-3 flex items-center gap-3 text-left transition"
+                                >
+                                  {img ? (
+                                    <img
+                                      src={resolveImageUrl(img)}
+                                      alt={p.images?.[0]?.alt || p.name}
+                                      className="w-12 h-12 rounded object-cover"
+                                      onError={(e) => (e.currentTarget.style.display = 'none')}
+                                    />
+                                  ) : (
+                                    <div className="w-12 h-12 rounded bg-gray-200 flex items-center justify-center text-xs text-gray-500">
+                                      No image
+                                    </div>
                                   )}
-                                </div>
-                              </div>
-                            ))}
+                                  <div className="flex-1">
+                                    <div className="font-medium text-gray-800">{p.name}</div>
+                                    {p.scientific_name && (
+                                      <div className="text-sm text-gray-600 italic">{p.scientific_name}</div>
+                                    )}
+                                  </div>
+                                </button>
+                              );
+                            })}
                           </div>
+
                         </div>
                       )}
 
@@ -657,6 +690,8 @@ export default function ChatInterface() {
           </button>
         </div>
       </div>
+      <PlantModal open={!!selectedPlant} plant={selectedPlant} onClose={() => setSelectedPlant(null)} />
     </motion.div>
+    
   );
 }

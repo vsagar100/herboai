@@ -1,6 +1,7 @@
 .venv
 .venv1
 backend/venv
+backend/static/plant_images
 frontend/node_modules
 node_modules
 backend/routes/__pycache__

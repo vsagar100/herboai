@@ -1,9 +1,9 @@
 # services/nlu.py
 from langdetect import detect
 import re, unicodedata
-from typing import Literal, Tuple, Optional, List
+from typing import Literal, Tuple, Optional, List, Dict
 from sqlalchemy.orm import Session
-from sqlalchemy import func, literal, or_, text
+from sqlalchemy import func, literal, or_, text 
 from models import Plant, Remedy
 
 Intent = Literal["plant", "condition"]
@@ -257,3 +257,109 @@ def parse_intent(db: Session, text: str) -> Tuple[Intent, Optional[Plant]]:
         return "plant", p
     # fall back to remedies
     return "condition", None
+
+
+# --- ADD near the top of services/nlu.py imports ---
+from sqlalchemy import text
+from typing import Dict
+
+# --- ADD these helpers to services/nlu.py ---
+
+def _fts_query_string(q_norm: str, lang: str) -> str:
+    """
+    Build a compact MATCH query that mixes tokens plus canonical symptom labels.
+    """
+    toks = _tokens(q_norm)[:6]
+    # pull canonical English labels (even if lang is hi/mr, we mapped to CANON)
+    labels = canonical_symptoms(q_norm, lang)
+    parts = toks + [l.lower() for l in labels]
+    return " OR ".join(dict.fromkeys([p for p in parts if p])) or q_norm
+
+def fts_plants(db: Session, q_norm: str, lang: str, limit: int = 6) -> list[Plant]:
+    """
+    Primary: FTS5 with BM25. Secondary: LIKE fallback.
+    """
+    q = _fts_query_string(q_norm, lang)
+    try:
+        rows = db.execute(
+            text("""
+                SELECT p.id
+                FROM plant p
+                JOIN plant_fts f ON f.rowid = p.id
+                WHERE plant_fts MATCH :q
+                ORDER BY bm25(plant_fts) ASC, length(p.name) DESC
+                LIMIT :lim
+            """),
+            {"q": q, "lim": limit*2},
+        ).fetchall()
+        if rows:
+            ids = [r[0] for r in rows]
+            got = db.query(Plant).filter(Plant.id.in_(ids)).all()
+            # preserve FTS ranking order
+            order = {pid:i for i,pid in enumerate(ids)}
+            got.sort(key=lambda p: order.get(p.id, 10**9))
+            return got[:limit]
+    except Exception:
+        pass
+
+    like = f"%{q_norm}%"
+    return db.query(Plant).filter(
+        (Plant.name.ilike(like)) |
+        (Plant.scientific_name.ilike(like)) |
+        (func.coalesce(Plant.synonyms, "").ilike(like)) |
+        (func.coalesce(Plant.uses, "").ilike(like)) |
+        (func.coalesce(Plant.description, "").ilike(like))
+    ).limit(limit).all()
+
+def fts_remedies(db: Session, q_norm: str, lang: str, limit: int = 5) -> list[Remedy]:
+    """
+    Try canonical labels → FTS (BM25) → LIKE.
+    """
+    labels = canonical_symptoms(q_norm, lang)
+    if labels:
+        q = db.query(Remedy).filter(func.lower(Remedy.symptom).in_([l.lower() for l in labels]))
+        hit = q.limit(limit).all()
+        if hit:
+            return hit
+
+    q = _fts_query_string(q_norm, lang)
+    try:
+        rows = db.execute(
+            text("""
+                SELECT r.id
+                FROM remedy r
+                JOIN remedy_fts f ON f.rowid = r.id
+                WHERE remedy_fts MATCH :q
+                ORDER BY bm25(remedy_fts) ASC
+                LIMIT :lim
+            """),
+            {"q": q, "lim": limit*2},
+        ).fetchall()
+        if rows:
+            ids = [r[0] for r in rows]
+            got = db.query(Remedy).filter(Remedy.id.in_(ids)).all()
+            order = {pid:i for i,pid in enumerate(ids)}
+            got.sort(key=lambda r: order.get(r.id, 10**9))
+            return got[:limit]
+    except Exception:
+        pass
+
+    like = f"%{q_norm}%"
+    return db.query(Remedy).filter(
+        (Remedy.symptom.ilike(like)) |
+        (Remedy.diagnosis_pattern.ilike(like)) |
+        (Remedy.preparation.ilike(like)) |
+        (Remedy.dosage.ilike(like)) |
+        (Remedy.lifestyle_recommendations.ilike(like)) |
+        (Remedy.side_effects.ilike(like)) |
+        (Remedy.contraindications.ilike(like))
+    ).limit(limit).all()
+
+def hybrid_retrieve(db: Session, q_norm: str, lang: str,
+                    plant_limit: int = 5, remedy_limit: int = 3) -> Dict[str, list]:
+    """
+    Pull both plants and remedies; let the caller decide how to answer.
+    """
+    plants = fts_plants(db, q_norm, lang, plant_limit)
+    remedies = fts_remedies(db, q_norm, lang, remedy_limit)
+    return {"plants": plants, "remedies": remedies}

@@ -2,9 +2,10 @@
 from flask import Blueprint, request, jsonify
 from sqlalchemy.orm import load_only
 from database import get_session
-from services.nlu import parse_intent, search_remedies, detect_lang, normalize
+from services.nlu import parse_intent, search_remedies, detect_lang, normalize, hybrid_retrieve
 from models import Plant, Remedy
 from services.i18n import pick_locale, maybe_translate
+from services.rag_service import RAGService
 
 # OPTIONAL semantic fallback (safe even if not configured)
 try:
@@ -13,6 +14,12 @@ try:
 except Exception:
     semantic = None
     _SEMANTIC_OK = False
+
+_rag = RAGService(Plant, Remedy)
+try:
+    _rag._load_embedding_model()
+except Exception:
+    pass
 
 bp = Blueprint("chat", __name__, url_prefix="/api")
 
@@ -92,11 +99,37 @@ def _remedies_payload(remedies, db, target_lang: str) -> dict:
         out.append(item)
     return {"type": "remedies", "items": out, "lang": target_lang}
 
+def _plant_card(p):
+    return {
+        "id": p.id,
+        "name": p.name,
+        "scientific_name": p.scientific_name,
+        "ayush_system": p.ayush_system,
+        "category": p.category,
+        "parts_used": p.parts_used,
+        "uses": p.uses,
+        "phytochemicals": p.phytochemicals,
+        "dosage": p.dosage,
+        "contraindications": p.contraindications,
+        "formulations": p.formulations,
+        "description": p.description,
+        "properties": p.properties,
+        "images": [{"path": im.file_path, "alt": im.alt_text} for im in p.images],
+    }
+
+    related = [_plant_card(p) for p in plants[:5]]
+
+
 @bp.post("/chat")
 def query():
     try:
         payload = request.get_json(silent=True) or {}
         text = (payload.get("text") or "").strip()
+        # NEW: short-term context (previous user query) optionally passed by UI
+        ctx = (payload.get("context") or "").strip()
+        if ctx:
+            text = f"{ctx}. {text}"
+
         if not text:
             return jsonify({"error": "Empty query"}), 400
 
@@ -108,29 +141,36 @@ def query():
                 target_lang = "en"
 
         db = next(get_session())
-        intent, plant = parse_intent(db, text)
 
-        # ✅ PLANT PATH (unchanged)
-        if intent == "plant" and plant:
+        # === NEW: hybrid retrieval using FTS5 (+ canonical labels) ===
+        q_norm = normalize(text)
+        bundle = hybrid_retrieve(db, q_norm, target_lang, plant_limit=5, remedy_limit=3)
+        plants = bundle.get("plants") or []
+        remedies = bundle.get("remedies") or []
+
+        # If the user clearly asked *about a specific plant*, still allow the detailed single-plant view
+        intent, plant = parse_intent(db, text)
+        if intent == "plant" and plant and (not remedies) and (plants[:1] and plants[0].id == plant.id):
             return jsonify(_plant_payload(plant, target_lang))
 
-        # ✅ CONDITION PATH — language-aware search for remedies
-        q_norm = normalize(text)
-        remedies = search_remedies(db, q_norm, target_lang, limit=10) or []
+        # === Consolidated “LLM-like” answer, with semantic re-ranking if model loaded ===
+        answer_text = _rag.generate_response(text, plants, remedies)
 
-        if remedies:
-            return jsonify(_remedies_payload(remedies, db, target_lang))
+        # Build a compact related plants list for the UI card strip
+        related = []
+        for p in plants[:5]:
+            related.append({
+                "id": p.id,
+                "name": p.name,
+                "scientific_name": p.scientific_name,
+                "images": [{"path": im.file_path, "alt": im.alt_text} for im in p.images],
+            })
 
-        # (optional) semantic fallbacks...
-        # ...
-
-        # Nothing found
+        # NEW: a generic 'answer' type the UI can render like a chat completion
         return jsonify({
-            "type": "none",
-            "message": maybe_translate(
-                "Sorry, I couldn’t find a direct remedy. Try another term (e.g., 'cough', 'acidity', or a plant name).",
-                target_lang
-            ),
+            "type": "answer",
+            "text": answer_text,
+            "plants": related,
             "lang": target_lang
         }), 200
 
