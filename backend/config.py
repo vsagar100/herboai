@@ -4,7 +4,7 @@ import os
 class Settings:
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dev-jwt")
-    SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL", "sqlite:///herboai.db")
+    SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL", "sqlite:///new_herboai.db")
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", "static/plant_images")
     ALLOWED_IMAGE_EXT = os.getenv("ALLOWED_IMAGE_EXT", "jpg,jpeg,png,webp")
