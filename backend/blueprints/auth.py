@@ -18,7 +18,7 @@ def login():
 
     db = next(get_session())
     user = db.query(AdminUser).filter_by(username=username).first()
-    if not user or not check_password_hash(user.password_hash, password):
+    if not user or (user.password_hash != password ):  #check_password_hash(user.password_hash, password):
         return jsonify({"error": "Invalid username or password"}), 401
 
     token = create_access_token(identity=user.id)

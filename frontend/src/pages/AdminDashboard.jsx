@@ -19,7 +19,11 @@ const PER_PAGE_OPTIONS = [5, 9, 15, 30];
 const resolveImageUrl = (path) => {
   if (!path) return "";
   if (/^https?:\/\//i.test(path)) return path;
-  return `${API_ORIGIN}${path.startsWith("/") ? "" : "/"}${path}`;
+  
+  // Clean up path
+  const cleanPath = path.startsWith("/") ? path.substring(1) : path;
+  
+  return `${API_ORIGIN}/${cleanPath}`;
 };
 
 const toArray = (val) => {
@@ -89,26 +93,46 @@ export default function AdminDashboard() {
   async function loadPlants() {
     setLoading(true);
     try {
-      const params = new URLSearchParams({
-        search: query || "",
-        page: String(page),
-        per_page: String(perPage),
-      });
-      const { data } = await api.get(`/plants?${params}`);
-      setPlants(Array.isArray(data.plants) ? data.plants : []);
+      const params = {
+        q: query || "",
+        page: page,
+        per_page: perPage
+      };
+      
+      console.log("Loading plants with params:", params);
+      
+      const { data } = await api.get(`/plants`, { params });
+      console.log("Fetched plants response:", data);
+      console.log("Expected per_page:", perPage, "| Actual items received:", data.items?.length || data.plants?.length);
+      
+      // Handle both response formats
+      const plantList = data.items || data.plants || [];
+      setPlants(Array.isArray(plantList) ? plantList : []);
       setPages(Number(data.pages || 1));
-    } catch {
+    } catch (err) {
+      console.error("Load plants error:", err);
       setFlash("Could not load plants.");
     } finally {
       setLoading(false);
     }
   }
-  useEffect(() => { if (auth.is_admin) loadPlants(); }, [auth.is_admin, page, perPage]);
+  
+  // Load plants when page or perPage changes
+  useEffect(() => { 
+    if (auth.is_admin) {
+      loadPlants(); 
+    }
+  }, [auth.is_admin, page, perPage]);
+  
+  // Handle search with debounce
   useEffect(() => {
     if (!auth.is_admin) return;
-    const timer = setTimeout(() => { setPage(1); loadPlants(); }, 300);
+    const timer = setTimeout(() => { 
+      setPage(1); 
+      loadPlants(); 
+    }, 300);
     return () => clearTimeout(timer);
-  }, [query, auth.is_admin]);
+  }, [query]);
 
   // ---- CRUD handlers ----
   const onCreate = () => {
@@ -123,11 +147,20 @@ export default function AdminDashboard() {
       contraindications: "",
       image_path: "",
       description: "",
-      properties: {},
+      properties: "",
+      dosage: "",
+      parts_used: "",
+      phytochemicals: "",
+      formulations: "",
     });
     setShowForm(true);
   };
-  const onEdit = (row) => { setEditing({ ...row, uses: toArray(row.uses) }); setShowForm(true); };
+  
+  const onEdit = (row) => { 
+    setEditing({ ...row, uses: toArray(row.uses) }); 
+    setShowForm(true); 
+  };
+  
   const onDelete = (row) => setConfirm({ id: row.id, name: row.name });
 
   async function createOrUpdate(plant, file) {
@@ -138,10 +171,10 @@ export default function AdminDashboard() {
       let saved;
       if (plant.id) {
         const { data } = await api.put(`/plants/${plant.id}`, payload);
-        saved = data;
+        saved = data.plant || data;
       } else {
         const { data } = await api.post(`/plants`, payload);
-        saved = data;
+        saved = data.plant || data;
       }
 
       // 2) upload image if provided (overrides any typed URL)
@@ -156,11 +189,13 @@ export default function AdminDashboard() {
         saved = img.plant || saved;
       }
 
-      setFlash(plant.id ? "Plant updated." : "Plant created.");
-      setShowForm(false); setEditing(null);
+      setFlash(plant.id ? "Plant updated successfully." : "Plant created successfully.");
+      setShowForm(false); 
+      setEditing(null);
       await loadPlants();
-    } catch {
-      setFlash("Save failed.");
+    } catch (err) {
+      console.error("Save error:", err);
+      setFlash("Save failed. Please try again.");
     }
   }
 
@@ -168,16 +203,15 @@ export default function AdminDashboard() {
     if (!confirm) return;
     try {
       await api.delete(`/plants/${confirm.id}`);
-      setFlash("Plant deleted.");
+      setFlash("Plant deleted successfully.");
       setConfirm(null);
       if (plants.length === 1 && page > 1) setPage((p) => Math.max(1, p - 1));
       else loadPlants();
-    } catch {
-      setFlash("Delete failed.");
+    } catch (err) {
+      console.error("Delete error:", err);
+      setFlash("Delete failed. Please try again.");
     }
   }
-
-  
 
   // ---- header bar ----
   const HeaderBar = (
@@ -219,20 +253,27 @@ export default function AdminDashboard() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search by name, scientific name, uses, category..."
-                className="w-full pl-10 pr-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-green-500 border-gray-300"
+                className="w-full pl-10 pr-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none border-gray-300"
               />
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-600">Per page</span>
+              <span className="text-sm text-gray-600">Per page:</span>
               <select
                 value={perPage}
-                onChange={(e) => setPerPage(Number(e.target.value))}
-                className="px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 border-gray-300"
+                onChange={(e) => {
+                  const newPerPage = Number(e.target.value);
+                  setPerPage(newPerPage);
+                  setPage(1); // Reset to first page when changing per page
+                }}
+                className="px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none border-gray-300 bg-white"
               >
                 {PER_PAGE_OPTIONS.map((n) => (
                   <option key={n} value={n}>{n}</option>
                 ))}
               </select>
+              <span className="text-xs text-gray-500">
+                ({plants.length} shown)
+              </span>
             </div>
           </div>
         </div>
@@ -258,7 +299,7 @@ export default function AdminDashboard() {
                 <li key={p.id} className="px-4 md:px-6 py-4">
                   {/* desktop row */}
                   <div className="hidden md:grid grid-cols-[80px,1.2fr,1fr,0.8fr,1.2fr,140px] gap-4 items-center">
-                    <Thumbnail path={p.image_path} name={p.name} />
+                    <Thumbnail path={p.image_path || p.images?.[0]?.path} name={p.name} />
                     <div className="font-semibold text-gray-900">{p.name}</div>
                     <div className="text-gray-600 italic">{p.scientific_name}</div>
                     <div>
@@ -298,7 +339,7 @@ export default function AdminDashboard() {
                   {/* mobile card */}
                   <div className="md:hidden">
                     <div className="flex gap-3">
-                      <Thumbnail path={p.image_path} name={p.name} />
+                      <Thumbnail path={p.image_path || p.images?.[0]?.path} name={p.name} />
                       <div className="flex-1">
                         <div className="font-semibold text-gray-900">{p.name}</div>
                         <div className="text-gray-600 italic text-sm">{p.scientific_name}</div>
@@ -345,7 +386,7 @@ export default function AdminDashboard() {
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page <= 1}
-              className="px-4 py-2 border rounded-lg disabled:opacity-50"
+              className="px-4 py-2 border rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 transition-colors"
             >
               Prev
             </button>
@@ -353,7 +394,7 @@ export default function AdminDashboard() {
             <button
               onClick={() => setPage((p) => Math.min(pages, p + 1))}
               disabled={page >= pages}
-              className="px-4 py-2 border rounded-lg disabled:opacity-50"
+              className="px-4 py-2 border rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 transition-colors"
             >
               Next
             </button>
@@ -361,7 +402,11 @@ export default function AdminDashboard() {
         </div>
 
         {/* flash */}
-        {flash && <div className="mt-4 text-sm text-gray-700">{flash}</div>}
+        {flash && (
+          <div className="mt-4 p-3 bg-green-50 border border-green-200 text-green-800 rounded-lg">
+            {flash}
+          </div>
+        )}
       </div>
 
       <PlantFormModal
@@ -374,7 +419,7 @@ export default function AdminDashboard() {
       <ConfirmModal
         open={!!confirm}
         title="Delete Plant"
-        message={`Are you sure you want to delete “${confirm?.name}”? This cannot be undone.`}
+        message={`Are you sure you want to delete "${confirm?.name}"? This cannot be undone.`}
         onCancel={() => setConfirm(null)}
         onConfirm={confirmDelete}
       />
@@ -394,7 +439,10 @@ function Thumbnail({ path, name }) {
           src={url}
           alt={name}
           className="w-full h-full object-cover"
-          onError={(e) => { e.currentTarget.style.display = "none"; }}
+          onError={(e) => { 
+            console.error('Image failed:', url);
+            e.currentTarget.style.display = "none"; 
+          }}
         />
       ) : (
         <Leaf className="w-6 h-6 text-green-600" />
@@ -420,6 +468,9 @@ function ImageUploadButton({ id, onUploaded, small }) {
         { headers: { "Content-Type": "multipart/form-data" }, withCredentials: true }
       );
       onUploaded && onUploaded(data.plant);
+    } catch (err) {
+      console.error("Upload error:", err);
+      alert("Image upload failed");
     } finally {
       setBusy(false);
     }
@@ -436,7 +487,7 @@ function ImageUploadButton({ id, onUploaded, small }) {
       />
       <button
         onClick={pick}
-        className={`px-3 py-2 border rounded-lg hover:bg-gray-50 ${busy ? "opacity-60" : ""}`}
+        className={`px-3 py-2 border rounded-lg hover:bg-gray-50 transition-colors ${busy ? "opacity-60" : ""}`}
         title="Upload image"
         disabled={busy}
       >
@@ -463,95 +514,210 @@ function PlantFormModal({ open, value, onClose, onSave }) {
     if (f) setPreviewUrl(URL.createObjectURL(f));
   };
 
+  if (!form) return null;
+
   return (
     <AnimatePresence>
-      {open && form && (
+      {open && (
         <motion.div
-          className="fixed inset-0 z-[60] flex items-center justify-center"
-          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+          initial={{ opacity: 0 }} 
+          animate={{ opacity: 1 }} 
+          exit={{ opacity: 0 }}
         >
           <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+          
+          {/* UPDATED: Added flex flex-col and max-h-[90vh] */}
           <motion.div
             initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0.95, opacity: 0 }}
-            className="relative bg-white rounded-2xl shadow-2xl w-[92vw] max-w-2xl p-6"
+            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col"
           >
-            <div className="flex items-center justify-between mb-4">
+            {/* Fixed Header */}
+            <div className="flex items-center justify-between p-6 border-b shrink-0">
               <div className="text-xl font-semibold">
                 {form.id ? "Edit Plant" : "Add New Plant"}
               </div>
-              <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100">
+              <button 
+                onClick={onClose} 
+                className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="grid grid-cols-1 gap-4">
-              <Input label="Name" value={form.name} onChange={(v) => setForm({ ...form, name: v })} />
-              <Input label="Scientific name" value={form.scientific_name} onChange={(v) => setForm({ ...form, scientific_name: v })} />
-
-              <div className="grid sm:grid-cols-3 gap-3">
-                <Input label="AYUSH System" value={form.ayush_system} onChange={(v) => setForm({ ...form, ayush_system: v })} />
-                <Input label="Category" value={form.category} onChange={(v) => setForm({ ...form, category: v })} />
-                <Input
-                  label="Uses (comma/JSON list)"
-                  value={Array.isArray(form.uses) ? form.uses.join(", ") : (form.uses || "")}
-                  onChange={(v) => setForm({ ...form, uses: v })}
+            {/* Scrollable Content */}
+            <div className="overflow-y-auto flex-1 p-6">
+              <div className="grid grid-cols-1 gap-4">
+                <Input 
+                  label="Name *" 
+                  value={form.name} 
+                  onChange={(v) => setForm({ ...form, name: v })} 
+                  required
                 />
-              </div>
+                
+                <Input 
+                  label="Scientific Name" 
+                  value={form.scientific_name} 
+                  onChange={(v) => setForm({ ...form, scientific_name: v })} 
+                />
 
-              {/* Image uploader + optional URL */}
-              <div className="grid sm:grid-cols-2 gap-4">
-                <label className="block">
-                  <div className="text-sm text-gray-700 mb-1">Plant Image</div>
-                  <input
-                    type="file"
-                    accept=".png,.jpg,.jpeg,.webp,.gif"
-                    onChange={pickFile}
-                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 border-gray-300"
-                  />
-                  <div className="text-xs text-gray-500 mt-1">
-                    If you select a file, it will be uploaded on Save.
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-1">AYUSH System</label>
+                    <select
+                      value={form.ayush_system || "Ayurveda"}
+                      onChange={(e) => setForm({ ...form, ayush_system: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none border-gray-300"
+                    >
+                      <option>Ayurveda</option>
+                      <option>Unani</option>
+                      <option>Siddha</option>
+                      <option>Homeopathy</option>
+                      <option>Yoga & Naturopathy</option>
+                    </select>
                   </div>
-                </label>
-
-                <label className="block">
-                  <div className="text-sm text-gray-700 mb-1">Or paste public image URL</div>
-                  <input
-                    value={form.image_path || ""}
-                    onChange={(e) => setForm({ ...form, image_path: e.target.value })}
-                    placeholder="https://example.com/image.jpg or /static/plant_images/file.jpg"
-                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 border-gray-300"
-                  />
-                  <div className="text-xs text-gray-500 mt-1">
-                    If a file is chosen, it overrides this URL.
-                  </div>
-                </label>
-              </div>
-
-              {(previewUrl || form.image_path) && (
-                <div className="rounded-lg overflow-hidden border">
-                  <img
-                    src={previewUrl || resolveImageUrl(form.image_path)}
-                    alt={form.name}
-                    className="w-full max-h-64 object-cover"
-                    onError={(e) => { e.currentTarget.style.display = "none"; }}
+                  
+                  <Input 
+                    label="Category" 
+                    value={form.category} 
+                    onChange={(v) => setForm({ ...form, category: v })} 
                   />
                 </div>
-              )}
 
-              <TextArea label="Description" value={form.description} onChange={(v) => setForm({ ...form, description: v })} />
-              <TextArea label="Preparation" value={form.preparation} onChange={(v) => setForm({ ...form, preparation: v })} />
-              <TextArea label="Contraindications" value={form.contraindications} onChange={(v) => setForm({ ...form, contraindications: v })} />
+                <div>
+                  <label className="block text-sm text-gray-700 mb-1">
+                    Uses (comma-separated or JSON array)
+                  </label>
+                  <input
+                    value={Array.isArray(form.uses) ? form.uses.join(", ") : (form.uses || "")}
+                    onChange={(e) => setForm({ ...form, uses: e.target.value })}
+                    placeholder="Digestive issues, Anti-inflammatory, Pain relief"
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none border-gray-300"
+                  />
+                  <div className="text-xs text-gray-500 mt-1">
+                    Example: Pain relief, Digestive aid, Anti-inflammatory
+                  </div>
+                </div>
+
+                {/* Image uploader + optional URL */}
+                <div className="space-y-3">
+                  <label className="block">
+                    <div className="text-sm text-gray-700 mb-1">Upload Plant Image</div>
+                    <input
+                      type="file"
+                      accept=".png,.jpg,.jpeg,.webp,.gif"
+                      onChange={pickFile}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none border-gray-300 file:mr-4 file:py-1 file:px-3 file:rounded file:border-0 file:bg-green-50 file:text-green-700 hover:file:bg-green-100"
+                    />
+                    <div className="text-xs text-gray-500 mt-1">
+                      Recommended: JPG, PNG, or WebP (max 5MB)
+                    </div>
+                  </label>
+
+                  <div className="text-sm text-center text-gray-500">OR</div>
+
+                  <Input
+                    label="Image URL (if not uploading file)"
+                    value={form.image_path || ""}
+                    onChange={(v) => setForm({ ...form, image_path: v })}
+                    placeholder="https://example.com/image.jpg"
+                  />
+                </div>
+
+                {/* Image Preview */}
+                {(previewUrl || form.image_path) && (
+                  <div className="rounded-lg overflow-hidden border bg-gray-50 p-2">
+                    <div className="text-xs text-gray-600 mb-2">Preview:</div>
+                    <img
+                      src={previewUrl || resolveImageUrl(form.image_path)}
+                      alt={form.name || "Preview"}
+                      className="w-full max-h-48 object-contain rounded"
+                      onError={(e) => { 
+                        e.currentTarget.style.display = "none";
+                        e.currentTarget.parentElement.innerHTML += '<div class="text-sm text-red-600 p-4">Image failed to load</div>';
+                      }}
+                    />
+                  </div>
+                )}
+
+                <TextArea 
+                  label="Description" 
+                  value={form.description} 
+                  onChange={(v) => setForm({ ...form, description: v })} 
+                  rows={4}
+                />
+
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <Input 
+                    label="Parts Used" 
+                    value={form.parts_used} 
+                    onChange={(v) => setForm({ ...form, parts_used: v })} 
+                    placeholder="Leaves, roots, seeds"
+                  />
+                  
+                  <Input 
+                    label="Dosage" 
+                    value={form.dosage} 
+                    onChange={(v) => setForm({ ...form, dosage: v })} 
+                    placeholder="1-2 tsp daily"
+                  />
+                </div>
+
+                <TextArea 
+                  label="Preparation Method" 
+                  value={form.preparation} 
+                  onChange={(v) => setForm({ ...form, preparation: v })} 
+                  rows={3}
+                  placeholder="How to prepare this plant for medicinal use"
+                />
+                
+                <TextArea 
+                  label="Contraindications & Warnings" 
+                  value={form.contraindications} 
+                  onChange={(v) => setForm({ ...form, contraindications: v })} 
+                  rows={3}
+                  placeholder="When not to use this plant"
+                />
+
+                <Input 
+                  label="Properties" 
+                  value={form.properties} 
+                  onChange={(v) => setForm({ ...form, properties: v })} 
+                  placeholder="Anti-inflammatory, Antioxidant, Antimicrobial"
+                />
+
+                <Input 
+                  label="Phytochemicals" 
+                  value={form.phytochemicals} 
+                  onChange={(v) => setForm({ ...form, phytochemicals: v })} 
+                  placeholder="Alkaloids, Flavonoids, Tannins"
+                />
+
+                <Input 
+                  label="Formulations" 
+                  value={form.formulations} 
+                  onChange={(v) => setForm({ ...form, formulations: v })} 
+                  placeholder="Powder, Decoction, Paste"
+                />
+              </div>
             </div>
 
-            <div className="mt-5 flex justify-end gap-3">
-              <button onClick={onClose} className="px-4 py-2 border rounded-lg hover:bg-gray-50">Cancel</button>
+            {/* Fixed Footer */}
+            <div className="flex justify-end gap-3 p-6 border-t shrink-0 bg-gray-50">
+              <button 
+                onClick={onClose} 
+                className="px-5 py-2 border rounded-lg hover:bg-gray-100 transition-colors"
+              >
+                Cancel
+              </button>
               <button
                 onClick={() => onSave({ ...form, uses: toArray(form.uses) }, file)}
-                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                disabled={!form.name?.trim()}
+                className="px-5 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
-                Save
+                {form.id ? "Update Plant" : "Create Plant"}
               </button>
             </div>
           </motion.div>
@@ -566,21 +732,33 @@ function ConfirmModal({ open, title, message, onCancel, onConfirm }) {
     <AnimatePresence>
       {open && (
         <motion.div
-          className="fixed inset-0 z-[70] flex items-center justify-center"
-          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[70] flex items-center justify-center p-4"
+          initial={{ opacity: 0 }} 
+          animate={{ opacity: 1 }} 
+          exit={{ opacity: 0 }}
         >
           <div className="absolute inset-0 bg-black/50" onClick={onCancel} />
           <motion.div
             initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0.95, opacity: 0 }}
-            className="relative bg-white rounded-2xl shadow-2xl w-[92vw] max-w-md p-6"
+            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6"
           >
             <div className="text-lg font-semibold mb-2">{title}</div>
             <div className="text-gray-700 mb-5">{message}</div>
             <div className="flex justify-end gap-3">
-              <button onClick={onCancel} className="px-4 py-2 border rounded-lg hover:bg-gray-50">Cancel</button>
-              <button onClick={onConfirm} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">Delete</button>
+              <button 
+                onClick={onCancel} 
+                className="px-4 py-2 border rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={onConfirm} 
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              >
+                Delete
+              </button>
             </div>
           </motion.div>
         </motion.div>
@@ -593,59 +771,113 @@ function AdminLogin({ onSuccess }) {
   const [u, setU] = useState("");
   const [p, setP] = useState("");
   const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const submit = async (e) => {
     e.preventDefault();
+    setLoading(true);
+    setErr("");
+    
     try {
-      await axios.post(`${API_ORIGIN}/api/auth/login`, { username: u, password: p }, { withCredentials: true });
+      await axios.post(
+        `${API_ORIGIN}/api/auth/login`, 
+        { username: u, password: p }, 
+        { withCredentials: true }
+      );
       window.dispatchEvent(new CustomEvent("auth:changed", { detail: { is_admin: true } }));
       onSuccess && onSuccess();
-    } catch {
-      setErr("Invalid credentials");
+    } catch (error) {
+      setErr("Invalid credentials. Please try again.");
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
     <div className="min-h-[60vh] flex items-center justify-center p-6">
-      <form onSubmit={submit} className="bg-white p-6 rounded-xl shadow w-full max-w-sm">
-        <h2 className="text-xl font-semibold mb-4">Admin Login</h2>
-        <div className="mb-3">
-          <input value={u} onChange={(e) => setU(e.target.value)} placeholder="Username"
-            className="w-full px-3 py-2 border rounded-lg" />
+      <form onSubmit={submit} className="bg-white p-8 rounded-xl shadow-lg w-full max-w-md">
+        <div className="text-center mb-6">
+          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Leaf className="w-8 h-8 text-green-600" />
+          </div>
+          <h2 className="text-2xl font-bold text-gray-900">Admin Login</h2>
+          <p className="text-gray-600 mt-1">Enter your credentials to continue</p>
         </div>
-        <div className="mb-4">
-          <input type="password" value={p} onChange={(e) => setP(e.target.value)} placeholder="Password"
-            className="w-full px-3 py-2 border rounded-lg" />
+        
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Username
+            </label>
+            <input 
+              value={u} 
+              onChange={(e) => setU(e.target.value)} 
+              placeholder="Enter username"
+              required
+              className="w-full px-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none border-gray-300"
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Password
+            </label>
+            <input 
+              type="password" 
+              value={p} 
+              onChange={(e) => setP(e.target.value)} 
+              placeholder="Enter password"
+              required
+              className="w-full px-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none border-gray-300"
+            />
+          </div>
         </div>
-        {err && <div className="text-sm text-red-600 mb-3">{err}</div>}
-        <button className="w-full bg-green-600 text-white py-2 rounded-lg hover:bg-green-700">Login</button>
+        
+        {err && (
+          <div className="mt-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+            {err}
+          </div>
+        )}
+        
+        <button 
+          type="submit"
+          disabled={loading}
+          className="w-full mt-6 bg-green-600 text-white py-2.5 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+        >
+          {loading ? "Logging in..." : "Login"}
+        </button>
       </form>
     </div>
   );
 }
 
-function Input({ label, value, onChange }) {
+function Input({ label, value, onChange, placeholder, required }) {
   return (
     <label className="block">
-      <div className="text-sm text-gray-700 mb-1">{label}</div>
+      <div className="text-sm font-medium text-gray-700 mb-1">
+        {label} {required && <span className="text-red-500">*</span>}
+      </div>
       <input
         value={value || ""}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 border-gray-300"
+        placeholder={placeholder}
+        required={required}
+        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none border-gray-300"
       />
     </label>
   );
 }
 
-function TextArea({ label, value, onChange }) {
+function TextArea({ label, value, onChange, placeholder, rows = 3 }) {
   return (
     <label className="block">
-      <div className="text-sm text-gray-700 mb-1">{label}</div>
+      <div className="text-sm font-medium text-gray-700 mb-1">{label}</div>
       <textarea
         value={value || ""}
-        rows={3}
+        rows={rows}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 border-gray-300"
+        placeholder={placeholder}
+        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none border-gray-300 resize-y"
       />
     </label>
   );
