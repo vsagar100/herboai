@@ -1,22 +1,165 @@
-// src/pages/ChatInterface.jsx
-import React, { useState, useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { MessageCircle, Send, Download, FileText, FileJson, FileImage } from "lucide-react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
+import { motion } from "framer-motion";
+import { MessageCircle, Send, Sparkles } from "lucide-react";
+import axios from "axios";
+import { jsPDF } from "jspdf";
+import PlantModal from "../components/PlantModal";
 import { useGlobalState } from "../store";
 import { translations } from "../i18n";
-import axios from "axios";
-import PlantModal from "../components/PlantModal";
 
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "http://localhost:5000";
-const api = axios.create({ baseURL: `${API_ORIGIN}/api`, withCredentials: true });
+// Dev via Vite proxy (no CORS): baseURL: "/api"
+const api = axios.create({ baseURL: "/api", withCredentials: false });
+
+/** Utils */
+// save plain text
+function saveTextFile(filename, text) {
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// save a simple, clean PDF
+function saveAnswerPDF(filename, title, body, meta = {}) {
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  const margin = 48;
+  let y = margin;
+
+  doc.setFont("Helvetica", "bold"); doc.setFontSize(16);
+  doc.text(title || "HerboAI Answer", margin, y);
+  y += 22;
+
+  doc.setFont("Helvetica", "normal"); doc.setFontSize(10);
+  const ts = new Date().toLocaleString();
+  const metaLine = [
+    meta.session && `Session: ${meta.session}`,
+    meta.lang && `Lang: ${meta.lang}`,
+    `Created: ${ts}`,
+  ].filter(Boolean).join("   •   ");
+  if (metaLine) { doc.text(metaLine, margin, y); y += 18; }
+
+  doc.setDrawColor(230); doc.line(margin, y, doc.internal.pageSize.getWidth()-margin, y);
+  y += 18;
+
+  doc.setFontSize(12);
+  const maxWidth = doc.internal.pageSize.getWidth() - margin * 2;
+  const lines = doc.splitTextToSize(body || "", maxWidth);
+
+  lines.forEach((line) => {
+    if (y > doc.internal.pageSize.getHeight() - margin) {
+      doc.addPage(); y = margin;
+    }
+    doc.text(line, margin, y);
+    y += 16;
+  });
+
+  doc.save(filename);
+}
 
 const resolveImageUrl = (path) => {
-     if (!path) return "";
-     if (/^https?:\/\//i.test(path)) return path;
-     const cleanPath = path.startsWith("/") ? path.slice(1) : path;
-     // backend serves via /files/ for relative paths
-     return `${API_ORIGIN}/${cleanPath.startsWith("files/") ? cleanPath : `files/${cleanPath}`}`;
-   };
+  if (!path) return "";
+  if (/^https?:\/\//i.test(path)) return path;
+  const clean = path.startsWith("/") ? path.slice(1) : path;
+  return `${API_ORIGIN}/${clean.startsWith("files/") ? clean : `files/${clean}`}`;
+};
+const safeParse = (v) => {
+  if (v == null) return null;
+  if (typeof v !== "string") return v;
+  try { return JSON.parse(v); } catch { return v; }
+};
+const normalizePlant = (raw) => {
+  if (!raw) return null;
+  const r = raw.plant || raw; // tolerate {plant:{...}} or direct row
+  const name =
+    r.common_name_en || r.commonNameEn || r.common_name || r.name || r.botanical_name || "Herbal Plant";
+  const sci = r.botanical_name || r.botanicalName || r.scientific_name || "";
+  const parts = safeParse(r.parts_used) || r.parts_used || [];
+  const actions = safeParse(r.therapeutic_actions) || r.therapeutic_actions || [];
+  const guna = safeParse(r.guna) || r.guna || null;
+  const rasa = safeParse(r.rasa) || r.rasa || null;
+  const dosha = safeParse(r.dosha_effect) || r.dosha_effect || null;
+
+  let img = r.image_url || r.image_hero || (r.images?.[0]?.path);
+  img = img ? resolveImageUrl(img) : "";
+
+  return {
+    id: r.id,
+    name,
+    scientific_name: sci,
+    description: r.description || "",
+    parts_used: Array.isArray(parts) ? parts : (parts ? [parts] : []),
+    actions: Array.isArray(actions) ? actions : (actions ? [actions] : []),
+    virya: r.virya || null,
+    vipaka: r.vipaka || null,
+    guna,
+    rasa,
+    dosha_effect: dosha,
+    images: img ? [{ path: img }] : [],
+    _raw: raw,
+  };
+};
+
+/** Left Suggestions panel (durable + modular) */
+const SuggestionPanel = ({ onUse }) => {
+  const diseases = ["Diabetes", "Common Cold", "Arthritis", "Hypertension", "Indigestion"];
+  const preparations = [
+    "How to prepare Gudmar decoction?",
+    "Turmeric milk preparation",
+    "Triphala powder dosage",
+    "Neem oil usage for skin",
+  ];
+  const plants = ["Tell me about Ashwagandha", "Benefits of Turmeric", "Uses of Amla", "Neem for acne"];
+
+  const Chip = ({ label }) => (
+    <button
+      onClick={() => onUse(label)}
+      className="px-3 py-2 rounded-full bg-white/70 hover:bg-white border border-green-100 text-sm text-gray-700 transition"
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="h-full flex flex-col gap-6">
+      <div>
+        <h3 className="text-sm font-semibold text-green-700 mb-3">Quick Conditions</h3>
+        <div className="flex flex-wrap gap-2">
+          {diseases.map((d) => (
+            <Chip key={d} label={`I have ${d.toLowerCase()}. What helps?`} />
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <h3 className="text-sm font-semibold text-green-700 mb-3">Preparations</h3>
+        <div className="flex flex-wrap gap-2">
+          {preparations.map((p) => (
+            <Chip key={p} label={p} />
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <h3 className="text-sm font-semibold text-green-700 mb-3">Plants</h3>
+        <div className="flex flex-wrap gap-2">
+          {plants.map((p) => (
+            <Chip key={p} label={p} />
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-auto text-xs text-gray-500">
+        Tips: Try mixing English/Hindi/Marathi. Example: “मधुमेह साठी काय घ्यावं?”
+      </div>
+    </div>
+  );
+};
 
 export default function ChatInterface() {
   const [state] = useGlobalState();
@@ -26,672 +169,297 @@ export default function ChatInterface() {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [selectedPlant, setSelectedPlant] = useState(null);
+  const [isThinking, setIsThinking] = useState(false);
+
+  /** Header usage-of-space: real collapse (no empty gap) */
+  const [headerHidden, setHeaderHidden] = useState(false);
+  const HEADER_H = 84; // px
 
   const listRef = useRef(null);
-  const [showBanner, setShowBanner] = useState(true);
-  const [downloadMenuOpen, setDownloadMenuOpen] = useState(null);
+  const sessionId = useRef(`chat-${Date.now()}`).current;
+  const rafRef = useRef(null);
 
-  useEffect(() => {
-    listRef.current?.scrollTo({
-      top: listRef.current.scrollHeight,
-      behavior: "smooth",
-    });
-  }, [messages]);
-
+  // Header hide/show without flicker AND without leaving empty space
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
-
     const onScroll = () => {
-      const atTop = el.scrollTop <= 6;
-      setShowBanner(atTop || messages.length === 0);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = requestAnimationFrame(() => {
+        setHeaderHidden(el.scrollTop > 16);
+      });
     };
-
     el.addEventListener("scroll", onScroll, { passive: true });
     onScroll();
-
-    return () => el.removeEventListener("scroll", onScroll);
-  }, [messages.length]);
-
-  // Download handlers
-  const downloadAsText = (message) => {
-    let content = `HerboAI - Herbal Remedy Information\n`;
-    content += `Generated: ${new Date(message.timestamp).toLocaleString()}\n`;
-    content += `${"=".repeat(60)}\n\n`;
-    content += message.text.replace(/\*\*/g, '').replace(/_/g, '') + '\n\n';
-    
-    if (message.relevantPlants?.length) {
-      content += `Related Plants:\n`;
-      for (const p of message.relevantPlants) {
-        content += ` - ${p.name}${p.scientific_name ? ` (${p.scientific_name})` : ""}\n`;
-      }
-      content += `\n`;
-    }
-    
-    content += `\n${"=".repeat(60)}\n`;
-    content += `Disclaimer: This information is for educational purposes only.\n`;
-    content += `Always consult with a qualified healthcare professional before\n`;
-    content += `starting any herbal treatment.\n`;
-
-    const blob = new Blob([content], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `herbal-remedy-${Date.now()}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const downloadAsJSON = (message) => {
-    const data = {
-      generatedAt: message.timestamp,
-      response: message.text,
-      relevantPlants: message.relevantPlants || [],
-      metadata: {
-        source: "HerboAI",
-        language: state.language,
-        disclaimer: "This information is for educational purposes only. Always consult with a qualified healthcare professional before starting any herbal treatment."
-      }
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
+  }, []);
 
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `herbal-remedy-${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  // Autoscroll on new messages
+  useEffect(() => {
+    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages, isThinking]);
 
-  const downloadAsPDF = async (message) => {
-    // Create HTML content for PDF
-    let htmlContent = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8">
-        <style>
-          body { 
-            font-family: Arial, sans-serif; 
-            padding: 40px; 
-            max-width: 800px; 
-            margin: 0 auto;
-            line-height: 1.6;
-            color: #333;
-          }
-          .header { 
-            border-bottom: 3px solid #16a34a; 
-            padding-bottom: 20px; 
-            margin-bottom: 30px;
-          }
-          .header h1 { 
-            color: #16a34a; 
-            margin: 0 0 10px 0;
-            font-size: 28px;
-          }
-          .header .date { 
-            color: #666; 
-            font-size: 14px;
-          }
-          .content { 
-            margin-bottom: 30px;
-            white-space: pre-wrap;
-          }
-          .content h2 {
-            color: #16a34a;
-            margin-top: 25px;
-            font-size: 20px;
-          }
-          .plants-section {
-            margin-top: 40px;
-            padding-top: 20px;
-            border-top: 2px solid #e5e7eb;
-          }
-          .plants-section h2 {
-            color: #16a34a;
-            margin-bottom: 20px;
-          }
-          .plant-card {
-            background: #f9fafb;
-            border: 1px solid #e5e7eb;
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 15px;
-            display: flex;
-            align-items: center;
-            gap: 15px;
-          }
-          .plant-card img {
-            width: 80px;
-            height: 80px;
-            object-fit: cover;
-            border-radius: 6px;
-          }
-          .plant-info h3 {
-            margin: 0 0 5px 0;
-            color: #1f2937;
-            font-size: 18px;
-          }
-          .plant-info .scientific {
-            font-style: italic;
-            color: #6b7280;
-            font-size: 14px;
-          }
-          .disclaimer {
-            margin-top: 40px;
-            padding: 20px;
-            background: #fef3c7;
-            border-left: 4px solid #f59e0b;
-            border-radius: 4px;
-          }
-          .disclaimer h3 {
-            margin: 0 0 10px 0;
-            color: #92400e;
-          }
-          .disclaimer p {
-            margin: 0;
-            color: #78350f;
-            font-size: 14px;
-          }
-          .footer {
-            margin-top: 40px;
-            padding-top: 20px;
-            border-top: 1px solid #e5e7eb;
-            text-align: center;
-            color: #9ca3af;
-            font-size: 12px;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <h1>🌿 HerboAI - Herbal Remedy Information</h1>
-          <div class="date">Generated: ${new Date(message.timestamp).toLocaleString()}</div>
-        </div>
-        
-        <div class="content">
-          ${message.text.split('\n').map(line => {
-            if (line.startsWith('**') && line.endsWith('**')) {
-              return `<h2>${line.replace(/\*\*/g, '')}</h2>`;
-            }
-            if (line.startsWith('_') && line.endsWith('_')) {
-              return `<p style="font-style: italic; color: #6b7280;">${line.replace(/_/g, '')}</p>`;
-            }
-            return line ? `<p>${line}</p>` : '<br/>';
-          }).join('')}
-        </div>
-    `;
+  const ThinkingIndicator = useMemo(
+    () => (
+      <motion.div
+        className="flex items-center gap-2 text-gray-600 text-sm mt-2"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.3 }}
+      >
+        <Sparkles className="w-4 h-4 text-green-500 animate-pulse" />
+        <span>HerboAI is thinking...</span>
+      </motion.div>
+    ),
+    []
+  );
 
-    if (message.relevantPlants?.length > 0) {
-      htmlContent += `
-        <div class="plants-section">
-          <h2>Related Medicinal Plants</h2>
-      `;
-      
-      for (const plant of message.relevantPlants) {
-        htmlContent += `
-          <div class="plant-card">
-        `;
-        
-        if (plant.images?.[0]) {
-          htmlContent += `
-            <img src="${API_ORIGIN}/files/${plant.images[0].path}" alt="${plant.name}" onerror="this.style.display='none'"/>
-          `;
-        }
-        
-        htmlContent += `
-            <div class="plant-info">
-              <h3>${plant.name}</h3>
-              ${plant.scientific_name ? `<div class="scientific">${plant.scientific_name}</div>` : ''}
-            </div>
-          </div>
-        `;
-      }
-      
-      htmlContent += `</div>`;
-    }
+  async function send(customText) {
+    const payload = (typeof customText === "string" ? customText : text).trim();
+    if (!payload || sending) return;
 
-    htmlContent += `
-        <div class="disclaimer">
-          <h3>⚠️ Important Disclaimer</h3>
-          <p>
-            This information is provided for educational purposes only and should not be considered 
-            medical advice. Always consult with a qualified healthcare professional or licensed 
-            practitioner before starting any herbal treatment or remedy. Individual results may vary, 
-            and some herbs may interact with medications or have contraindications.
-          </p>
-        </div>
-        
-        <div class="footer">
-          <p>Generated by HerboAI - AYUSH Traditional Medicine Knowledge System</p>
-          <p>© ${new Date().getFullYear()} - For Educational Use Only</p>
-        </div>
-      </body>
-      </html>
-    `;
-
-    // Open print dialog which allows saving as PDF
-    const printWindow = window.open('', '_blank');
-    printWindow.document.write(htmlContent);
-    printWindow.document.close();
-    
-    // Wait for images to load before printing
-    printWindow.onload = () => {
-      setTimeout(() => {
-        printWindow.print();
-      }, 500);
-    };
-  };
-
-  async function send() {
-    if (!text.trim() || sending) return;
-    const user = { id: Date.now(), sender: "user", text, timestamp: new Date() };
-    setMessages((m) => [...m, user]);
+    const userMsg = { id: Date.now(), sender: "user", text: payload, timestamp: new Date() };
+    setMessages((m) => [...m, userMsg]);
     setText("");
     setSending(true);
+    setIsThinking(true);
 
     try {
-      const prevUser = [...messages].reverse().find(m => m.sender === "user");
-      const { data } = await api.post("/chat", {
-        text: user.text,
-        lang: state.language,
-        context: prevUser ? prevUser.text : undefined
-      });
+      const { data } = await api.post(
+        "/query",
+        { text: payload, session_id: sessionId },
+        { headers: { "x-session-id": sessionId } }
+      );
 
-      let responseText = "";
-      let relevantPlants = [];
+      // --- DEBUG to inspect exactly what backend returns ---
+      console.log("[/api/query] raw response:", data);
 
-      console.log("API response:", data);
+      const answer = data?.answer || "Sorry, I couldn’t find any direct remedy.";
+      const structured = data?.structured || {};
+      const intent = data?.intent;
+      const plants = structured?.plants || [];
+      const onePlant = structured?.plant || null;
 
-      // Handle different response types from backend
-      if (data.type === "plant" && data.plant) {
-        // Single plant response
-        const plant = data.plant;
-        responseText = `**${plant.name}**`;
-        if (plant.scientific_name) {
-          responseText += ` (_${plant.scientific_name}_)`;
-        }
-        responseText += `\n\n`;
-        
-        if (plant.description) {
-          responseText += `${plant.description}\n\n`;
-        }
-        
-        if (plant.uses) {
-          responseText += `**Uses:** ${plant.uses}\n\n`;
-        }
-        
-        if (plant.dosage) {
-          responseText += `**Dosage:** ${plant.dosage}\n\n`;
-        }
-        
-        if (plant.contraindications) {
-          responseText += `**⚠️ Contraindications:** ${plant.contraindications}\n\n`;
-        }
-        
-        if (plant.parts_used) {
-          responseText += `**Parts Used:** ${plant.parts_used}\n`;
-        }
-        
-        relevantPlants = [{
-          id: plant.id,
-          name: plant.name,
-          scientific_name: plant.scientific_name,
-          images: plant.images || []
-        }];
+      let responseText = answer;
+      let relatedPlants = plants.map(normalizePlant);
 
-      } else if (data.type === "remedies" && data.items?.length > 0) {
-        // Multiple remedies response
-        if (data.items.length === 1) {
-          const item = data.items[0];
-          responseText = `**Remedy for ${item.symptom}**\n\n`;
-          
-          if (item.preparation) {
-            responseText += `**Preparation:** ${item.preparation}\n\n`;
-          }
-          
-          if (item.dosage) {
-            responseText += `**Dosage:** ${item.dosage}\n\n`;
-          }
-          
-          if (item.lifestyle_recommendations) {
-            responseText += `**Lifestyle Recommendations:** ${item.lifestyle_recommendations}\n\n`;
-          }
-          
-          if (item.side_effects && item.side_effects !== "—") {
-            responseText += `**Side Effects:** ${item.side_effects}\n\n`;
-          }
-          
-          if (item.contraindications && item.contraindications !== "—") {
-            responseText += `**⚠️ Contraindications:** ${item.contraindications}\n\n`;
-          }
-          
-          if (item.ayush_system) {
-            responseText += `_System: ${item.ayush_system}_`;
-          }
-          
-          // Collect plants from this remedy
-          if (item.plants) {
-            relevantPlants = item.plants;
-          }
-        } else {
-          // Multiple remedies
-          responseText = `I found **${data.items.length} remedies** for your query:\n\n`;
-          
-          data.items.forEach((item, idx) => {
-            responseText += `**${idx + 1}. ${item.symptom}**\n`;
-            if (item.preparation) {
-              responseText += `   • Preparation: ${item.preparation}\n`;
-            }
-            if (item.dosage) {
-              responseText += `   • Dosage: ${item.dosage}\n`;
-            }
-            responseText += `\n`;
-            
-            // Collect all plants
-            if (item.plants) {
-              relevantPlants.push(...item.plants);
-            }
-          });
-          
-          // Remove duplicate plants by id
-          const uniquePlants = [];
-          const seenIds = new Set();
-          relevantPlants.forEach(plant => {
-            if (!seenIds.has(plant.id)) {
-              seenIds.add(plant.id);
-              uniquePlants.push(plant);
-            }
-          });
-          relevantPlants = uniquePlants;
-        }
-
-      } else if (data.type === "none") {
-        // No results found
-        responseText = data.message || "Sorry, I couldn't find any information about that.";
-
-      } else if (data.type === "answer") {
-        responseText = data.text || "I found some relevant information.";
-        relevantPlants = data.plants || [];
-      } 
-      else {
-        // Unexpected format
-        responseText = "I received your query but couldn't format the response properly.";
-        console.error("Unexpected response format:", data);
+      if (intent === "plant_info" && onePlant) {
+        const np = normalizePlant(onePlant);
+        relatedPlants = [np];
+        responseText = `**${np.name}**${np.scientific_name ? ` (_${np.scientific_name}_)` : ""}\n\n${np.description || ""}`;
+        if (np.actions?.length) responseText += `\n\n**Actions:** ${np.actions.join(", ")}`;
+        if (np.parts_used?.length) responseText += `\n**Parts Used:** ${np.parts_used.join(", ")}`;
       }
 
-      const ai = {
-        id: user.id + 1,
+      const aiMsg = {
+        id: userMsg.id + 1,
         sender: "ai",
         text: responseText,
-        relevantPlants: relevantPlants,
+        relevantPlants: relatedPlants,
         timestamp: new Date(),
       };
-      setMessages((m) => [...m, ai]);
-
-    } catch (error) {
-      console.error("Chat error:", error);
+      setMessages((m) => [...m, aiMsg]);
+    } catch (err) {
+      console.error("Chat error:", err);
       setMessages((m) => [
         ...m,
-        {
-          id: user.id + 1,
-          sender: "ai",
-          text: "I'm having trouble connecting to the server. Please try again.",
-          timestamp: new Date(),
-        },
+        { id: Date.now() + 1, sender: "ai", text: "⚠️ Server not reachable.", timestamp: new Date() },
       ]);
     } finally {
       setSending(false);
+      setIsThinking(false);
     }
   }
 
   const handlePlantClick = async (id) => {
-  try {
-    const { data } = await api.get(`/plants/${id}`);
-    setSelectedPlant(data);
-  } catch (err) {
-    console.error("Failed to load plant details:", err);
-  }
-};
+    try {
+      const { data } = await api.get(`/plants/${id}`);
+      console.log("[/api/plants/:id] raw response:", data); // DEBUG
+      const normalized = normalizePlant(data);
+      console.log("[/api/plants/:id] normalized:", normalized); // DEBUG
+      setSelectedPlant(normalized);
+    } catch (err) {
+      console.error("Failed to load plant details:", err);
+      // Fallback: pick from last AI message list if API not ready for this id
+      const lastAI = [...messages].reverse().find((m) => m.sender === "ai" && m.relevantPlants?.length);
+      const hit = lastAI?.relevantPlants?.find((p) => p.id === id);
+      setSelectedPlant(hit || null);
+    }
+  };
+
+  /** Header (overlay) + spacer that collapses to 0 when header hides */
+  const Header = () => (
+    <>
+      {/* overlay header */}
+      <div
+        className="fixed left-0 right-0 z-10 bg-white/80 backdrop-blur-md border-b shadow-sm"
+        style={{
+          top: 64, // your green global navbar height
+          height: HEADER_H,
+          transform: headerHidden ? "translateY(-120%)" : "translateY(0)",
+          transition: "transform 220ms ease",
+        }}
+      >
+        <div className="h-full flex items-center max-w-7xl mx-auto px-10">
+          <div>
+            <h1 className="text-2xl font-bold text-green-700 mt-2">HerboAI Assistant</h1>
+            <p className="text-gray-600 text-sm">Ask about herbs, remedies, or preparations</p>
+          </div>
+        </div>
+      </div>
+
+      {/* dynamic spacer: reclaims space when header hides */}
+      <div style={{ height: headerHidden ? 0 : HEADER_H }} />
+    </>
+  );
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      className="flex flex-col h-[calc(100vh-64px)] bg-gray-50"
-    >
-      <AnimatePresence initial={false}>
-        {showBanner && (
-          <motion.div
-            key="chat-banner"
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.2 }}
-            className="bg-white shadow-sm border-b p-6"
-          >
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">{t.chat.title}</h1>
-            <p className="text-gray-600">{t.chat.description}</p>
-          </motion.div>
-        )}
-      </AnimatePresence>
+    <div className="relative min-h-[calc(100vh-64px)] bg-gradient-to-br from-green-50 via-white to-emerald-50">
+      <Header />
 
-      <div ref={listRef} className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-4xl mx-auto">
-          {messages.length === 0 ? (
-            <div className="text-center py-12">
-              <div className="bg-green-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
-                <MessageCircle className="w-10 h-10 text-green-600" />
+      <div className="flex max-w-7xl mx-auto">
+        {/* LEFT PANEL (no overlap, its own scroll) */}
+        <aside
+          className="hidden lg:flex w-[22%] min-w-[260px] max-w-[320px] border-r bg-white/60 backdrop-blur-sm p-5"
+          style={{ maxHeight: `calc(100vh - ${64 + (headerHidden ? 0 : HEADER_H)}px)` }}
+        >
+          <div className="w-full h-full overflow-y-auto pr-2 pb-28">
+            <SuggestionPanel onUse={(q) => send(q)} />
+          </div>
+        </aside>
+
+        {/* MAIN CHAT */}
+        <section className="flex-1 flex flex-col">
+          <div
+            ref={listRef}
+            className="flex-1 overflow-y-auto px-6 pt-4 pb-8 space-y-6"
+            style={{ maxHeight: `calc(100vh - ${64 + 72 + (headerHidden ? 0 : HEADER_H)}px)` }} // 72 ~= composer height
+          >
+            {messages.length === 0 ? (
+              <div className="text-center py-12">
+                <div className="bg-green-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner">
+                  <MessageCircle className="w-10 h-10 text-green-600" />
+                </div>
+                <h3 className="text-xl font-semibold text-gray-800 mb-2">Welcome to HerboAI</h3>
+                <p className="text-gray-600">
+                  Ask me about medicinal plants, Ayurvedic formulations, or conditions.
+                </p>
               </div>
-              <h3 className="text-xl font-semibold text-gray-900 mb-2">
-                Welcome to HerboAI Assistant
-              </h3>
-              <p className="text-gray-600 mb-6">
-                Ask me anything about medicinal plants, traditional remedies, or herbal
-                treatments.
-              </p>
-              <div className="grid md:grid-cols-2 gap-3 max-w-2xl mx-auto">
-                {t.chat.sampleQuestions.map((q, i) => (
-                  <button
-                    key={i}
-                    onClick={() => setText(q)}
-                    className="p-4 text-left bg-white rounded-lg shadow border hover:shadow-md transition-shadow"
+            ) : (
+              <>
+                {messages.map((m) => (
+                  <motion.div
+                    key={m.id}
+                    initial={{ opacity: 0, y: m.sender === "user" ? 20 : -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.25 }}
+                    className={`flex ${m.sender === "user" ? "justify-end" : "justify-start"}`}
                   >
-                    {q}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {messages.map((m) => (
-                <div
-                  key={m.id}
-                  className={`flex ${m.sender === "user" ? "justify-end" : "justify-start"}`}
-                >
-                  <div className="flex flex-col max-w-lg w-full">
                     <div
-                      className={`px-6 py-4 rounded-2xl ${
+                      className={`max-w-2xl px-5 py-4 rounded-2xl shadow ${
                         m.sender === "user"
-                          ? "bg-green-600 text-white"
-                          : "bg-white text-gray-800 shadow"
+                          ? "bg-gradient-to-br from-emerald-600 to-green-500 text-white"
+                          : "bg-white/70 backdrop-blur-md border border-green-100 text-gray-800"
                       }`}
                     >
-                      <div className="whitespace-pre-wrap prose prose-sm max-w-none">
-                        {m.text.split('\n').map((line, i) => {
-                          // Handle bold markdown
-                          if (line.startsWith('**') && line.endsWith('**')) {
-                            return <p key={i} className="font-bold mb-2">{line.replace(/\*\*/g, '')}</p>;
-                          }
-                          // Handle italic markdown
-                          if (line.startsWith('_') && line.endsWith('_')) {
-                            return <p key={i} className="italic text-sm text-gray-600">{line.replace(/_/g, '')}</p>;
-                          }
-                          // Regular line
-                          return line ? <p key={i} className="mb-1">{line}</p> : <br key={i} />;
-                        })}
-                      </div>
+                      <div className="whitespace-pre-wrap leading-relaxed">{m.text}</div>
 
                       {m.relevantPlants?.length > 0 && (
-                        <div className="mt-4 pt-4 border-t border-gray-200">
-                          <p className="text-sm font-medium text-gray-600 mb-2">
-                            {m.relevantPlants.length === 1 ? 'Related Plant:' : 'Related Plants:'}
-                          </p>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div className="mt-4 border-t border-gray-200 pt-3">
+                          <p className="text-sm font-medium text-gray-600 mb-2">Related Plants</p>
+                          <div className="grid sm:grid-cols-2 gap-3">
                             {m.relevantPlants.map((p) => {
-                              const img = p.images?.[0]?.path || p.images?.[0]?.file_path || p.image_path || "";
+                              const img = p.images?.[0]?.path || p.image_url;
                               return (
-                                <button
+                                <motion.button
+                                  whileHover={{ scale: 1.03 }}
+                                  whileTap={{ scale: 0.97 }}
                                   key={p.id}
-                                 // onClick={() => setSelectedPlant(p)}
                                   onClick={() => handlePlantClick(p.id)}
-                                  className="bg-gray-50 hover:bg-gray-100 rounded-lg p-3 flex items-center gap-3 text-left transition"
+                                  className="bg-white/60 backdrop-blur-sm border border-green-100 hover:border-green-300 rounded-xl p-3 flex gap-3 items-center shadow-sm transition-all text-left"
                                 >
                                   {img ? (
                                     <img
-                                      src={resolveImageUrl(img)}
-                                      alt={p.images?.[0]?.alt || p.name}
-                                      className="w-12 h-12 rounded object-cover"
-                                      onError={(e) => (e.currentTarget.style.display = 'none')}
+                                      src={img}
+                                      alt={p.name}
+                                      className="w-12 h-12 rounded object-cover ring-1 ring-green-200"
                                     />
                                   ) : (
-                                    <div className="w-12 h-12 rounded bg-gray-200 flex items-center justify-center text-xs text-gray-500">
-                                      No image
+                                    <div className="w-12 h-12 bg-green-50 rounded flex items-center justify-center text-gray-400 text-xs">
+                                      🌿
                                     </div>
                                   )}
-                                  <div className="flex-1">
-                                    <div className="font-medium text-gray-800">{p.name}</div>
+                                  <div className="text-left">
+                                    <div className="font-medium text-gray-800">
+                                      {p.name || p.common_name_en || p.scientific_name}
+                                    </div>
                                     {p.scientific_name && (
-                                      <div className="text-sm text-gray-600 italic">{p.scientific_name}</div>
+                                      <div className="text-xs text-gray-600 italic">{p.scientific_name}</div>
                                     )}
                                   </div>
-                                </button>
+                                </motion.button>
                               );
                             })}
                           </div>
-
                         </div>
                       )}
 
-                      <div
-                        className={`text-xs mt-2 ${
-                          m.sender === "user" ? "text-green-100" : "text-gray-500"
-                        }`}
-                      >
+                      <div className={`text-xs mt-2 ${m.sender === "user" ? "text-green-100" : "text-gray-500"}`}>
                         {new Date(m.timestamp).toLocaleTimeString()}
                       </div>
                     </div>
-
-                    {/* Download Button - Only for AI responses */}
-                    {m.sender === "ai" && (
-                      <div className="mt-2 relative">
-                        <button
-                          onClick={() => setDownloadMenuOpen(downloadMenuOpen === m.id ? null : m.id)}
-                          className="flex items-center gap-2 px-4 py-2 text-sm text-gray-600 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors"
-                        >
-                          <Download className="w-4 h-4" />
-                          <span>Download Response</span>
-                        </button>
-
-                        {/* Download Options Menu */}
-                        {downloadMenuOpen === m.id && (
-                          <motion.div
-                            initial={{ opacity: 0, y: -10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            className="absolute left-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-10 w-56"
-                          >
-                            <button
-                              onClick={() => {
-                                downloadAsText(m);
-                                setDownloadMenuOpen(null);
-                              }}
-                              className="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center gap-3 text-sm text-gray-700"
-                            >
-                              <FileText className="w-4 h-4 text-blue-600" />
-                              <div>
-                                <div className="font-medium">Text File (.txt)</div>
-                                <div className="text-xs text-gray-500">Simple text format</div>
-                              </div>
-                            </button>
-
-                            <button
-                              onClick={() => {
-                                downloadAsPDF(m);
-                                setDownloadMenuOpen(null);
-                              }}
-                              className="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center gap-3 text-sm text-gray-700"
-                            >
-                              <FileImage className="w-4 h-4 text-red-600" />
-                              <div>
-                                <div className="font-medium">PDF Document</div>
-                                <div className="text-xs text-gray-500">Formatted with images</div>
-                              </div>
-                            </button>
-
-                            <button
-                              onClick={() => {
-                                downloadAsJSON(m);
-                                setDownloadMenuOpen(null);
-                              }}
-                              className="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center gap-3 text-sm text-gray-700"
-                            >
-                              <FileJson className="w-4 h-4 text-green-600" />
-                              <div>
-                                <div className="font-medium">JSON Data (.json)</div>
-                                <div className="text-xs text-gray-500">Structured data format</div>
-                              </div>
-                            </button>
-                          </motion.div>
-                        )}
-                      </div>
-                    )}
+                  </motion.div>
+                ))}
+                {isThinking && (
+                  <div className="pl-1">
+                    <motion.div
+                      className="flex items-center gap-2 text-gray-600 text-sm mt-2"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ duration: 0.3 }}
+                    >
+                      <Sparkles className="w-4 h-4 text-green-500 animate-pulse" />
+                      <span>HerboAI is thinking...</span>
+                    </motion.div>
                   </div>
-                </div>
-              ))}
+                )}
+              </>
+            )}
+          </div>
 
-              {sending && (
-                <div className="flex justify-start">
-                  <div className="bg-white px-6 py-4 rounded-2xl shadow">
-                    <div className="flex gap-2">
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
-                      <div
-                        className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
-                        style={{ animationDelay: "0.1s" }}
-                      />
-                      <div
-                        className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
-                        style={{ animationDelay: "0.2s" }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
+          {/* Composer (non-sticky + built-in spacer to separate from footer) */}
+          <div className="px-6 pt-3 pb-6 bg-white/80 backdrop-blur-md border-t shadow-inner">
+            <div className="max-w-4xl mx-auto flex items-center gap-3">
+              <input
+                type="text"
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && send()}
+                placeholder="Type your message..."
+                className="flex-1 px-4 py-3 rounded-full border border-green-200 focus:outline-none focus:ring-2 focus:ring-green-400 bg-white shadow-sm placeholder:text-gray-400 transition-all"
+              />
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => send()}
+                disabled={sending || !text.trim()}
+                className="flex items-center gap-2 px-5 py-3 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 text-white font-medium shadow hover:shadow-md disabled:opacity-50"
+              >
+                <Send className="w-4 h-4" /> Send
+              </motion.button>
             </div>
-          )}
-        </div>
+          </div>
+
+          {/* Spacer to ensure footer never crowds the composer */}
+          <div className="h-6" />
+        </section>
       </div>
 
-      <div className="bg-white border-t p-6">
-        <div className="max-w-4xl mx-auto flex gap-3">
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && send()}
-            placeholder={t.chat.placeholder}
-            className="flex-1 px-4 py-3 border rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none border-gray-300"
-            disabled={sending}
-          />
-          <button
-            onClick={send}
-            disabled={sending || !text.trim()}
-            className="bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-          >
-            <Send className="w-4 h-4" /> <span>{t.chat.send}</span>
-          </button>
-        </div>
-      </div>
+      {/* Plant modal with normalized data */}
       <PlantModal open={!!selectedPlant} plant={selectedPlant} onClose={() => setSelectedPlant(null)} />
-    </motion.div>
-    
+    </div>
   );
 }

@@ -7,7 +7,7 @@ import Footer from "./components/Footer";
 import HomePage from "./pages/HomePage";
 import PlantLibrary from "./pages/PlantLibrary";
 import ChatInterface from "./pages/ChatInterface";
-import AdminDashboard from "./pages/AdminDashboard";
+import AdminPanel from "./pages/AdminPanel";
 
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "http://localhost:5000";
 const api = axios.create({ baseURL: `${API_ORIGIN}/api`, withCredentials: true });
@@ -37,7 +37,7 @@ export default function App() {
           <Route path="/" element={<HomePage />} />
           <Route path="/library" element={<PlantLibrary />} />
           <Route path="/chat" element={<ChatInterface />} />
-          <Route path="/admin" element={<AdminDashboard />} />
+          <Route path="/admin" element={<AdminPanel />} />
         </Routes>
       </AppShell>
     </Router>

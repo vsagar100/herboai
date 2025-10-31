@@ -1,181 +1,205 @@
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Filter, Eye, X, Loader2, Leaf, RefreshCw } from "lucide-react";
-import { useGlobalState } from "../store";
-import { translations } from "../i18n";
+import {
+  Search, Filter, Eye, X, RefreshCw, Sparkles, ChevronDown, Leaf,
+} from "lucide-react";
 import axios from "axios";
 import PlantModal from "../components/PlantModal";
+import { useGlobalState } from "../store";
+import { translations } from "../i18n";
 
-const api = axios.create({ baseURL: "http://localhost:5000/api" });
-const PER_PAGE = 9;
-
-const categories = [
-  "Anti-inflammatory","Antibacterial","Antiviral","Antifungal",
-  "Digestive","Respiratory","Cardiovascular","Nervous System",
-  "Immune System","Skin & Hair","Reproductive Health",
-  "Adaptogen","Detoxification","Pain Relief","Mental Health",
-  "Metabolic","Antioxidant"
-];
-
+// API: use Vite proxy for requests; images will use API_ORIGIN for absolute URLs
+const api = axios.create({ baseURL: "/api" });
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "http://localhost:5000";
 
+// --- SAME resolver you use in ChatInterface.jsx ---
 const resolveImageUrl = (path) => {
   if (!path) return "";
-  
-  // Already a full URL
   if (/^https?:\/\//i.test(path)) return path;
-  
-  // Remove leading slash if present
-  const cleanPath = path.startsWith("/") ? path.substring(1) : path;
-  
-  // Otherwise, prepend /files/
-  return `${API_ORIGIN}/${cleanPath}`;
+  const clean = path.startsWith("/") ? path.slice(1) : path;
+  return `${API_ORIGIN}/${clean.startsWith("files/") ? clean : `files/${clean}`}`;
 };
+
+// Optional quick categories (client-side tags)
+const quickTags = [
+  "Adaptogen", "Anti-inflammatory", "Antioxidant", "Digestive",
+  "Respiratory", "Metabolic", "Skin & Hair", "Nervous System",
+];
+
+const shimmerCard = (
+  <div className="bg-white/60 backdrop-blur-sm rounded-2xl overflow-hidden shadow ring-1 ring-black/5 animate-pulse">
+    <div className="h-40 bg-gradient-to-r from-emerald-100 to-green-50" />
+    <div className="p-5 space-y-3">
+      <div className="h-5 bg-gray-200 rounded w-2/3" />
+      <div className="h-3 bg-gray-200 rounded w-1/3" />
+      <div className="h-3 bg-gray-200 rounded w-full" />
+      <div className="h-3 bg-gray-200 rounded w-4/5" />
+      <div className="h-9 bg-emerald-200/60 rounded-lg" />
+    </div>
+  </div>
+);
+
+// Normalize plant list items from backend schema to UI shape
+function uiPlant(p) {
+  return {
+    id: p.id,
+    name: p.common_name_en || p.botanical_name || "Herbal Plant",
+    scientific_name: p.botanical_name || "",
+    description: p.description || "",
+    ayush_system: p.ayush_system || null,
+    uses: Array.isArray(p.therapeutic_actions) ? p.therapeutic_actions : tryJsonArray(p.therapeutic_actions),
+    image_url: resolveImageUrl(p.image_url || p.thumbnail_url || p.image_hero),
+    category: p.family || null,
+    _raw: p,
+  };
+}
+
+function tryJsonArray(v) {
+  if (!v) return [];
+  if (Array.isArray(v)) return v;
+  if (typeof v === "string") {
+    try { return JSON.parse(v); } catch { return []; }
+  }
+  return [];
+}
 
 export default function PlantLibrary() {
   const [state] = useGlobalState();
   const t = translations[state.language] || translations.en;
 
-  // Search and filter states
+  // Filters
   const [search, setSearch] = useState("");
-  const [category, setCategory] = useState("all");
+  const [tag, setTag] = useState("all");
   const [page, setPage] = useState(1);
-  
-  // Data states
-  const [allPlants, setAllPlants] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [lastFetch, setLastFetch] = useState(null);
-  
-  // Modal state
+  const [perPage, setPerPage] = useState(12); // <-- NEW records-per-page
+
+  // Data
+  const [plants, setPlants] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(null);
+  const [updatedAt, setUpdatedAt] = useState(null);
+
+  // Modal
   const [selected, setSelected] = useState(null);
 
-  // Fetch all plants once on mount
+  // UI controls
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+
   useEffect(() => {
-    fetchAllPlants();
+    let mounted = true;
+    (async () => {
+      setLoading(true);
+      setFetchError(null);
+      try {
+        // Large per_page for client-side filtering/pagination
+        const { data } = await api.get("/plants", { params: { per_page: 1000 } });
+        const list = data.items || data.plants || data || [];
+        const normalized = list.map(uiPlant);
+        if (mounted) {
+          setPlants(normalized);
+          setUpdatedAt(new Date());
+        }
+      } catch (e) {
+        console.error("Failed to load plants:", e);
+        if (mounted) setFetchError("Could not load plants. Please try again.");
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
+    return () => { mounted = false; };
   }, []);
 
-  async function fetchAllPlants() {
+  // search + tag filter + paging
+  const { pageItems, totalPages, totalFiltered } = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    let filtered = [...plants];
+
+    if (q) {
+      filtered = filtered.filter((p) =>
+        (p.name || "").toLowerCase().includes(q) ||
+        (p.scientific_name || "").toLowerCase().includes(q) ||
+        (p.description || "").toLowerCase().includes(q) ||
+        (Array.isArray(p.uses) ? p.uses.join(" ").toLowerCase().includes(q) : false)
+      );
+    }
+
+    if (tag !== "all") {
+      filtered = filtered.filter((p) =>
+        Array.isArray(p.uses) && p.uses.some((x) => x.toLowerCase().includes(tag.toLowerCase()))
+      );
+    }
+
+    const total = filtered.length;
+    const pages = Math.max(1, Math.ceil(total / perPage));
+    const start = (page - 1) * perPage;
+    const items = filtered.slice(start, start + perPage);
+    return { pageItems: items, totalPages: pages, totalFiltered: total };
+  }, [plants, search, tag, page, perPage]);
+
+  useEffect(() => setPage(1), [search, tag, perPage]);
+
+  const refresh = async () => {
     setLoading(true);
-    setError(null);
+    setFetchError(null);
     try {
-      // Fetch all plants without pagination (or with a very high limit)
-      const { data } = await api.get('/plants?per_page=1000');
-      
-      // Handle different response formats
-      const plants = data.items || data.plants || [];
-      setAllPlants(Array.isArray(plants) ? plants : []);
-      setLastFetch(new Date());
-      
+      const { data } = await api.get("/plants", { params: { per_page: 1000, ts: Date.now() } });
+      const list = data.items || data.plants || data || [];
+      setPlants(list.map(uiPlant));
+      setUpdatedAt(new Date());
     } catch (e) {
-      console.error("Error fetching plants:", e);
-      setError("Could not load plants. Using sample data.");
-      setAllPlants(samplePlants);
+      console.error(e);
+      setFetchError("Could not refresh data.");
     } finally {
       setLoading(false);
     }
-  }
-
-  // Client-side filtering and pagination
-  const { filteredPlants, totalPages } = useMemo(() => {
-    let filtered = [...allPlants];
-
-    // Apply search filter
-    if (search.trim()) {
-      const searchLower = search.toLowerCase();
-      filtered = filtered.filter(plant => {
-        return (
-          plant.name?.toLowerCase().includes(searchLower) ||
-          plant.scientific_name?.toLowerCase().includes(searchLower) ||
-          plant.synonyms?.toLowerCase().includes(searchLower) ||
-          plant.description?.toLowerCase().includes(searchLower)
-        );
-      });
-    }
-
-    // Apply category filter
-    if (category !== "all") {
-      filtered = filtered.filter(plant => {
-        // Check if plant.uses array contains the category
-        if (Array.isArray(plant.category)) {
-          return plant.category.some(use => 
-            use.toLowerCase().includes(category.toLowerCase())
-          );
-        }
-        // Also check category field if it exists
-        return plant.category?.toLowerCase() === category.toLowerCase();
-      });
-    }
-
-    // Calculate pagination
-    const total = Math.ceil(filtered.length / PER_PAGE);
-    const start = (page - 1) * PER_PAGE;
-    const paginated = filtered.slice(start, start + PER_PAGE);
-
-    return {
-      filteredPlants: paginated,
-      totalPages: total || 1,
-      totalResults: filtered.length
-    };
-  }, [allPlants, search, category, page]);
-
-  // Reset to page 1 when search or category changes
-  useEffect(() => {
-    setPage(1);
-  }, [search, category]);
-
-  // Manual refresh function
-  const handleRefresh = () => {
-    setSearch("");
-    setCategory("all");
-    setPage(1);
-    fetchAllPlants();
   };
 
   return (
-    <motion.div 
-      initial={{ opacity: 0 }} 
-      animate={{ opacity: 1 }} 
-      className="p-8 bg-gray-50 min-h-screen"
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="min-h-screen p-8 bg-gradient-to-br from-emerald-50 via-white to-green-50"
     >
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="mb-8 flex items-start justify-between">
+        <div className="mb-7 flex items-start justify-between">
           <div>
-            <h1 className="text-4xl font-bold text-gray-900 mb-2">
-              {t.plantLibrary.title}
-            </h1>
-            <p className="text-gray-600">{t.plantLibrary.description}</p>
-            {lastFetch && (
-              <p className="text-xs text-gray-400 mt-1">
-                Last updated: {lastFetch.toLocaleTimeString()}
-              </p>
+            <div className="flex items-center gap-2">
+              <h1 className="text-4xl font-black tracking-tight text-emerald-900">
+                {t.plantLibrary?.title || "Plant Library"}
+              </h1>
+              <Sparkles className="w-6 h-6 text-emerald-600" />
+            </div>
+            <p className="text-gray-600 mt-1">
+              {t.plantLibrary?.description || "Explore medicinal plants with Ayurvedic profiles, properties, and preparations."}
+            </p>
+            {updatedAt && (
+              <p className="text-xs text-gray-400 mt-1">Updated: {updatedAt.toLocaleTimeString()}</p>
             )}
           </div>
-          
-          {/* Refresh Button */}
+
           <button
-            onClick={handleRefresh}
+            onClick={refresh}
             disabled={loading}
-            className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
-            title="Refresh plant data"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-white/70 backdrop-blur-sm border border-emerald-200 rounded-xl hover:bg-white shadow-sm disabled:opacity-50"
+            title="Refresh"
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
             <span className="hidden sm:inline">Refresh</span>
           </button>
         </div>
 
-        {/* Search and Filters */}
-        <div className="bg-white rounded-xl shadow-lg p-6 mb-8">
-          <div className="flex flex-col md:flex-row gap-4">
-            {/* Search Input */}
+        {/* Filters */}
+        <div className="bg-white/70 backdrop-blur-md rounded-2xl shadow ring-1 ring-black/5 p-5 mb-7 relative z-20">
+          <div className="flex flex-col lg:flex-row gap-4 items-stretch lg:items-center">
+            {/* search */}
             <div className="flex-1 relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-500 w-5 h-5" />
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder={t.plantLibrary.searchPlaceholder || "Search by name, scientific name, or description..."}
-                className="w-full pl-10 pr-4 py-3 border rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none border-gray-300"
+                placeholder="Search by name, scientific name, properties, uses…"
+                className="w-full pl-10 pr-9 py-3 border rounded-xl focus:ring-2 focus:ring-emerald-500 border-emerald-200 bg-white/60"
               />
               {search && (
                 <button
@@ -187,237 +211,201 @@ export default function PlantLibrary() {
               )}
             </div>
 
-            {/* Category Filter */}
+            {/* categories dropdown (raised above cards via z-50) */}
+            <div className="flex items-center gap-2 relative">
+              <Filter className="w-5 h-5 text-emerald-600" />
+              <div className="relative">
+                <button
+                  onClick={() => setAdvancedOpen((s) => !s)}
+                  className="px-4 py-3 border rounded-xl bg-white/60 border-emerald-200 hover:bg-white flex items-center gap-2"
+                >
+                  {tag === "all" ? "All categories" : tag}
+                  <ChevronDown className="w-4 h-4 text-gray-500" />
+                </button>
+                <AnimatePresence>
+                  {advancedOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 6 }}
+                      className="absolute z-50 mt-2 w-[280px] bg-white rounded-xl shadow-lg ring-1 ring-black/5 p-2"
+                    >
+                      <button
+                        onClick={() => { setTag("all"); setAdvancedOpen(false); }}
+                        className={`w-full text-left px-3 py-2 rounded-lg hover:bg-emerald-50 ${tag==="all"?"bg-emerald-50":""}`}
+                      >
+                        All categories
+                      </button>
+                      <div className="mt-1 grid grid-cols-2 gap-1">
+                        {quickTags.map((q) => (
+                          <button
+                            key={q}
+                            onClick={() => { setTag(q); setAdvancedOpen(false); }}
+                            className={`text-left px-3 py-2 rounded-lg hover:bg-emerald-50 ${
+                              tag === q ? "bg-emerald-50" : ""
+                            }`}
+                          >
+                            {q}
+                          </button>
+                        ))}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            </div>
+
+            {/* records per page */}
             <div className="flex items-center gap-2">
-              <Filter className="w-5 h-5 text-gray-400" />
+              <span className="text-sm text-gray-600">Per page</span>
               <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                className="px-4 py-3 border rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none border-gray-300 bg-white"
+                value={perPage}
+                onChange={(e) => setPerPage(parseInt(e.target.value, 10))}
+                className="px-3 py-2 border rounded-lg bg-white/60 border-emerald-200"
               >
-                <option value="all">{t.plantLibrary.allCategories || "All Categories"}</option>
-                {categories.map((c) => (
-                  <option key={c} value={c}>{c}</option>
+                {[12, 24, 48, 96].map((n) => (
+                  <option key={n} value={n}>{n}</option>
                 ))}
               </select>
             </div>
           </div>
 
-          {/* Results Count */}
+          {/* results counter */}
           {!loading && (
             <div className="mt-3 text-sm text-gray-600">
-              Showing {filteredPlants.length} of {allPlants.length} plants
-              {(search || category !== "all") && " (filtered)"}
+              Showing <span className="font-semibold">{Math.min(page * perPage, totalFiltered)}</span> of{" "}
+              <span className="font-semibold">{totalFiltered}</span> results
+              {(search || tag !== "all") && " (filtered)"}
             </div>
           )}
         </div>
 
-        {/* Error Message */}
-        {error && (
-          <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-lg p-4 mb-6 flex items-start gap-3">
-            <div className="flex-1">{error}</div>
-            <button
-              onClick={handleRefresh}
-              className="text-amber-900 hover:text-amber-700 font-medium"
-            >
-              Retry
-            </button>
+        {/* Errors */}
+        {fetchError && (
+          <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-xl p-4 mb-6">
+            {fetchError}
           </div>
         )}
 
-        {/* Loading State */}
+        {/* Grid (ensure lower stacking ctx so dropdown can overlap) */}
         {loading ? (
-          <div className="flex flex-col items-center justify-center py-24">
-            <Loader2 className="w-10 h-10 animate-spin text-green-600 mb-4" />
-            <p className="text-gray-600">Loading medicinal plants...</p>
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            {Array.from({ length: 8 }).map((_, i) => <div key={i}>{shimmerCard}</div>)}
           </div>
         ) : (
           <>
-            {/* Plant Cards Grid */}
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {filteredPlants.map((p, idx) => (
+            <div className="relative z-0 grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              {pageItems.map((p, idx) => (
                 <motion.div
                   key={p.id || idx}
-                  initial={{ opacity: 0, y: 20 }}
+                  initial={{ opacity: 0, y: 18 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: idx * 0.05 }}
-                  className="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition-shadow"
+                  transition={{ delay: idx * 0.03 }}
+                  className="group relative bg-white/70 backdrop-blur-sm rounded-2xl overflow-hidden shadow hover:shadow-lg ring-1 ring-black/5"
                 >
                   {/* Image */}
-                  <div className="h-44 bg-gray-100 relative overflow-hidden">
-                    {(() => {
-                      // Try multiple possible image path formats
-                      let imagePath = null;
-                      
-                      if (p.image_path) {
-                        imagePath = p.image_path;
-                      } else if (p.images && Array.isArray(p.images) && p.images.length > 0) {
-                        imagePath = p.images[0].path || p.images[0].file_path;
-                      }
-                      
-                      // Debug: Log image info
-                      if (idx === 0) {
-                        console.log('Plant image data:', {
-                          name: p.name,
-                          image_path: p.image_path,
-                          images: p.images,
-                          resolved: imagePath
-                        });
-                      }
-                      
-                      return imagePath ? (
-                        <img
-                          src={resolveImageUrl(imagePath)}
-                          alt={p.name}
-                          loading="lazy"
-                          className="w-full h-full object-cover"
-                          onError={(e) => {
-                            console.error('Image failed to load:', resolveImageUrl(imagePath));
-                            e.currentTarget.style.display = 'none';
-                            const parent = e.currentTarget.parentElement;
-                            parent.innerHTML = `
-                              <div class="h-full w-full bg-gradient-to-r from-green-400 to-emerald-500 flex items-center justify-center">
-                                <svg class="w-16 h-16 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/>
-                                </svg>
-                              </div>
-                            `;
-                          }}
-                        />
-                      ) : (
-                        <div className="h-full w-full bg-gradient-to-r from-green-400 to-emerald-500 flex items-center justify-center">
-                          <Leaf className="w-16 h-16 text-white" />
-                        </div>
-                      );
-                    })()}
+                  <div className="h-40 relative overflow-hidden">
+                    {p.image_url ? (
+                      <img
+                        src={p.image_url}
+                        alt={p.name}
+                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                        loading="lazy"
+                        onError={(e) => (e.currentTarget.style.display = "none")}
+                      />
+                    ) : (
+                      <div className="w-full h-full bg-gradient-to-r from-emerald-100 to-green-50 flex items-center justify-center">
+                        <Leaf className="w-14 h-14 text-emerald-600" />
+                      </div>
+                    )}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent" />
                   </div>
 
                   {/* Content */}
-                  <div className="p-6">
-                    <div className="flex items-center justify-between mb-2">
-                      <h3 className="text-xl font-bold text-gray-900">{p.name}</h3>
+                  <div className="p-5">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="text-lg font-bold text-emerald-900 truncate">{p.name}</h3>
                       {p.ayush_system && (
-                        <span className="bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full">
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
                           {p.ayush_system}
                         </span>
                       )}
                     </div>
-                    
                     {p.scientific_name && (
-                      <p className="text-gray-500 text-sm mb-3 italic">{p.scientific_name}</p>
-                    )}
-                    
-                    {p.description && (
-                      <p className="text-gray-600 mb-4 line-clamp-3">{p.description}</p>
+                      <p className="text-gray-600 italic text-sm mt-0.5">{p.scientific_name}</p>
                     )}
 
-                    {/* Uses Tags */}
+                    {p.description && (
+                      <p className="text-gray-700 mt-3 line-clamp-3">{p.description}</p>
+                    )}
+
+                    {/* Uses chips */}
                     {Array.isArray(p.uses) && p.uses.length > 0 && (
-                      <div className="mb-4">
-                        <h4 className="font-semibold text-gray-900 mb-2 text-sm">Uses:</h4>
-                        <div className="flex flex-wrap gap-2">
-                          {p.uses.slice(0, 3).map((u, i) => (
-                            <span 
-                              key={i} 
-                              className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded"
-                            >
-                              {u}
-                            </span>
-                          ))}
-                          {p.uses.length > 3 && (
-                            <span className="text-xs text-gray-500 px-2 py-1">
-                              +{p.uses.length - 3} more
-                            </span>
-                          )}
-                        </div>
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        {p.uses.slice(0, 3).map((u, i) => (
+                          <span key={i} className="text-xs px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
+                            {u}
+                          </span>
+                        ))}
+                        {p.uses.length > 3 && (
+                          <span className="text-xs px-2 py-1 text-gray-500">+{p.uses.length - 3} more</span>
+                        )}
                       </div>
                     )}
 
-                    {/* View Details Button */}
                     <button
                       onClick={() => setSelected(p)}
-                      className="w-full bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center gap-2"
+                      className="mt-4 w-full inline-flex items-center justify-center gap-2 bg-emerald-600 text-white py-2.5 rounded-xl hover:bg-emerald-700 transition-colors shadow-sm"
                     >
                       <Eye className="w-4 h-4" />
-                      <span>{t.plantLibrary.viewDetails || "View Details"}</span>
+                      View Details
                     </button>
                   </div>
                 </motion.div>
               ))}
             </div>
 
-            {/* No Results */}
-            {filteredPlants.length === 0 && !loading && (
-              <div className="text-center py-12 text-gray-500">
-                <Search className="w-14 h-14 mx-auto mb-4 text-gray-300" />
-                <div className="font-medium text-lg mb-2">
-                  {t.plantLibrary.noPlants || "No plants found"}
+            {/* No results */}
+            {pageItems.length === 0 && (
+              <div className="text-center py-16 text-gray-600">
+                <Search className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                <div className="font-medium text-lg mb-1">No plants found</div>
+                <div className="text-sm">
+                  {search || tag !== "all" ? "Try adjusting your filters or search terms." : "No plants in database."}
                 </div>
-                <div className="text-sm mb-4">
-                  {search || category !== "all" 
-                    ? t.plantLibrary.tryAdjusting || "Try adjusting your filters or search terms"
-                    : "No plants available in the database"
-                  }
-                </div>
-                {(search || category !== "all") && (
-                  <button
-                    onClick={() => {
-                      setSearch("");
-                      setCategory("all");
-                    }}
-                    className="text-green-600 hover:text-green-700 font-medium"
-                  >
-                    Clear Filters
-                  </button>
-                )}
               </div>
             )}
 
             {/* Pagination */}
-            {filteredPlants.length > 0 && totalPages > 1 && (
-              <div className="flex items-center justify-center gap-3 mt-10">
+            {totalPages > 1 && (
+              <div className="flex items-center justify-center gap-2 mt-8">
                 <button
-                  disabled={page <= 1}
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  className="px-4 py-2 border rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 transition-colors"
+                  disabled={page <= 1}
+                  className="px-3 py-2 rounded-lg border bg-white hover:bg-gray-50 disabled:opacity-50"
                 >
                   Previous
                 </button>
-                
-                <div className="flex items-center gap-2">
-                  {/* Show page numbers */}
-                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                    let pageNum;
-                    if (totalPages <= 5) {
-                      pageNum = i + 1;
-                    } else if (page <= 3) {
-                      pageNum = i + 1;
-                    } else if (page >= totalPages - 2) {
-                      pageNum = totalPages - 4 + i;
-                    } else {
-                      pageNum = page - 2 + i;
-                    }
-                    
-                    return (
-                      <button
-                        key={pageNum}
-                        onClick={() => setPage(pageNum)}
-                        className={`w-10 h-10 rounded-lg transition-colors ${
-                          page === pageNum
-                            ? "bg-green-600 text-white"
-                            : "border hover:bg-gray-50"
-                        }`}
-                      >
-                        {pageNum}
-                      </button>
-                    );
-                  })}
-                </div>
-
+                {Array.from({ length: Math.min(7, totalPages) }, (_, i) => {
+                  let n;
+                  if (totalPages <= 7) n = i + 1;
+                  else if (page <= 4) n = i + 1;
+                  else if (page >= totalPages - 3) n = totalPages - 6 + i;
+                  else n = page - 3 + i;
+                  return (
+                    <button
+                      key={n}
+                      onClick={() => setPage(n)}
+                      className={`w-10 h-10 rounded-lg ${page === n ? "bg-emerald-600 text-white shadow" : "border hover:bg-gray-50 bg-white"}`}
+                    >
+                      {n}
+                    </button>
+                  );
+                })}
                 <button
-                  disabled={page >= totalPages}
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  className="px-4 py-2 border rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 transition-colors"
+                  disabled={page >= totalPages}
+                  className="px-3 py-2 rounded-lg border bg-white hover:bg-gray-50 disabled:opacity-50"
                 >
                   Next
                 </button>
@@ -427,51 +415,8 @@ export default function PlantLibrary() {
         )}
       </div>
 
-      {/* Plant Details Modal */}
+      {/* Modal */}
       <PlantModal open={!!selected} plant={selected} onClose={() => setSelected(null)} />
     </motion.div>
   );
 }
-
-function InfoBlock({ title, value }) {
-  if (!value || value === "—") return null;
-  
-  return (
-    <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-      <div className="text-xs uppercase tracking-wider text-gray-500 font-medium mb-1">
-        {title}
-      </div>
-      <div className="text-gray-800">{value}</div>
-    </div>
-  );
-}
-
-// Fallback sample data
-const samplePlants = [
-  {
-    id: 1,
-    name: "Turmeric",
-    scientific_name: "Curcuma longa",
-    ayush_system: "Ayurveda",
-    category: "Anti-inflammatory",
-    uses: ["Joint pain", "Digestive issues", "Skin conditions", "Wound healing"],
-    description: "A powerful anti-inflammatory herb used in traditional medicine for thousands of years.",
-    preparation: "Can be used as powder, paste, or decoction. Mix 1 tsp with warm milk.",
-    contraindications: "Avoid in gallstone patients. May increase bleeding risk.",
-    parts_used: "Rhizome",
-    properties: "Anti-inflammatory, antioxidant, antimicrobial"
-  },
-  {
-    id: 2,
-    name: "Neem",
-    scientific_name: "Azadirachta indica",
-    ayush_system: "Ayurveda",
-    category: "Antibacterial",
-    uses: ["Skin infections", "Dental health", "Blood purification"],
-    description: "Known as the village pharmacy, neem has potent antibacterial and antifungal properties.",
-    preparation: "Leaves as paste/decoction; twigs for dental hygiene.",
-    contraindications: "High doses not advised during pregnancy.",
-    parts_used: "Leaves, bark, seeds",
-    properties: "Antibacterial, antifungal, antiparasitic"
-  },
-];

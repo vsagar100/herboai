@@ -1,11 +1,9 @@
-# config.py
 import os
 
-class Settings:
-    SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
-    JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dev-jwt")
-    SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL", "sqlite:///new_herboai.db")
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
-    UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", "static/plant_images")
-    ALLOWED_IMAGE_EXT = os.getenv("ALLOWED_IMAGE_EXT", "jpg,jpeg,png,webp")
-    CORS_ORIGINS = [x.strip() for x in os.getenv("CORS_ORIGINS","http://localhost:3000").split(",")]
+class Config:
+    # Point to your created DB (from the v2.1 schema you loaded)
+    DB_PATH = os.environ.get("HERBOAI_DB_PATH", os.path.abspath("../db/herboai.db"))
+    # Global pagination defaults
+    DEFAULT_PAGE_SIZE = int(os.environ.get("HERBOAI_PAGE_SIZE", "20"))
+    MAX_PAGE_SIZE = int(os.environ.get("HERBOAI_MAX_PAGE_SIZE", "100"))
+    MEDIA_ROOT = os.environ.get("HERBOAI_MEDIA_ROOT", os.path.abspath("static/plant_images")) 
