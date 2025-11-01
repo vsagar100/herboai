@@ -1,7 +1,7 @@
 // src/AdminPanel.jsx — Full replacement (Vite + React 18 + Tailwind)
 // Follows your existing architecture (Auth → AdminShell → pages + DataGrid)
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useImperativeHandle, forwardRef, useRef  } from "react";
 
 // ------------------ API Client & Env ------------------
 const API_ORIGIN =
@@ -255,7 +255,10 @@ const resolveImageUrl = (path) => {
   if (!path) return "";
   if (/^https?:\/\//i.test(path)) return path;
   const clean = path.startsWith("/") ? path.slice(1) : path;
-  return `${API_ORIGIN}/${clean.startsWith("files/") ? clean : `files/${clean}`}`;
+  const img_path=`${IMAGE_LOCAL_PATH}/`+clean;
+  console.log("Resolving image URL for path:", path, "->", img_path);
+console.log("API_ORIGIN:", API_ORIGIN, clean);
+  return `${API_ORIGIN}/${clean.startsWith("files") ? img_path : `files/${img_path}`}`;
 };
 
 // ------------------ Plants ------------------
@@ -280,6 +283,7 @@ function ConfirmModal({ open, title="Confirm", message, onCancel, onConfirm }) {
 function PlantFormModal({ open, initial, onClose, onSaved }) {
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
+  const plantImagesRef = useRef(null);
 
   // Initialize form when modal opens or initial changes
   useEffect(() => {
@@ -299,8 +303,6 @@ function PlantFormModal({ open, initial, onClose, onSaved }) {
   async function handleSave(e) {
   e?.preventDefault();
   
-  console.log("Save clicked, form data:", form); // Debug log
-  
   if (!form.botanical_name?.trim()) {
     alert("Botanical name is required");
     return;
@@ -308,18 +310,18 @@ function PlantFormModal({ open, initial, onClose, onSaved }) {
   
   setSaving(true);
   try {
-    // Create a clean payload - exclude read-only and deprecated fields
     const { 
       id, 
       created_at, 
       updated_at, 
-      ayush_system_id,  // deprecated
+      ayush_system_id,
       ...cleanData 
     } = form;
     
     const payload = { ...cleanData };
+
+    console.log("image_hero in payload before upload:", payload.image_hero);
     
-    // Parse JSON fields if they're strings
     if (typeof payload.dosha_effect === "string") {
       const s = payload.dosha_effect.trim();
       if ((s.startsWith("{") && s.endsWith("}")) || (s.startsWith("[") && s.endsWith("]"))) {
@@ -331,30 +333,37 @@ function PlantFormModal({ open, initial, onClose, onSaved }) {
       }
     }
     
-    // Remove null values to avoid sending unnecessary data
     Object.keys(payload).forEach(key => {
       if (payload[key] === null || payload[key] === undefined) {
         delete payload[key];
       }
     });
 
-    // Determine if creating or updating
     const isNew = !form.id;
     const method = isNew ? "POST" : "PUT";
     const path = isNew ? "/api/admin/plants" : `/api/admin/plants/${form.id}`;
     
-    console.log("API call:", method, path, payload); // Debug log
-    
-    // Call the API
+    console.log("Saving plant...", method, path);
     const result = await api(path, { method, body: payload });
+    console.log("Plant saved:", result);
     
-    console.log("Save successful:", result); // Debug log
+    // Now upload image if file is selected
+    if (plantImagesRef.current?.hasFile && result.id) {
+      try {
+        console.log("Attempting to upload image for plant ID:", result.id);
+        // Pass the new plant ID to the upload function
+        await plantImagesRef.current.upload(result.id);
+        console.log("Image uploaded successfully");
+      } catch (uploadError) {
+        console.error("Image upload failed:", uploadError);
+        alert(`Plant saved but image upload failed: ${uploadError.message}`);
+      }
+    }
     
-    // Notify parent and close
     onSaved?.(result);
     onClose?.();
   } catch(e) {
-    console.error("Save error:", e); // Debug log
+    console.error("Save error:", e);
     alert(`Save failed: ${e.message}`);
   } finally { 
     setSaving(false); 
@@ -546,14 +555,13 @@ function PlantFormModal({ open, initial, onClose, onSaved }) {
               </div>
             </div>
 
-            {/* Image uploader (only show after plant is saved) */}
-            {form.id && (
+            {/* Image uploader */}
               <PlantImages 
+                ref={plantImagesRef}
                 plantId={form.id} 
                 currentPath={form.image_hero} 
                 onUpdated={(p) => setField("image_hero", IMAGE_LOCAL_PATH + "/" + p)} 
               />
-            )}
           </div>
 
           <div className="flex justify-end gap-2 border-t px-5 py-4">
@@ -568,15 +576,14 @@ function PlantFormModal({ open, initial, onClose, onSaved }) {
   );
 }
 
-function PlantImages({ plantId, currentPath, onUpdated }) {
+//function PlantImages({ plantId, currentPath, onUpdated }) {
+const PlantImages = forwardRef(({ plantId, currentPath, onUpdated }, ref) => {
   const [file, setFile] = useState(null);
   const [uploading, setUp] = useState(false);
   const [previewUrl, setPreviewUrl] = useState(null);
   
-  // Show current image or preview of selected file
   const displayUrl = previewUrl || (currentPath ? resolveImageUrl(currentPath) : null);
 
-  // Create preview when file is selected
   useEffect(() => {
     if (!file) {
       setPreviewUrl(null);
@@ -587,21 +594,35 @@ function PlantImages({ plantId, currentPath, onUpdated }) {
     return () => URL.revokeObjectURL(url);
   }, [file]);
 
-  async function upload() {
-    if (!file) return;
+  async function upload(overridePlantId) {
+    // Use override plantId if provided, otherwise use prop plantId
+    const targetPlantId = overridePlantId || plantId;
+    
+    if (!file) {
+      console.log("No file to upload");
+      return false;
+    }
+    
+    if (!targetPlantId) {
+      console.error("Cannot upload: no plant ID available");
+      return false;
+    }
+    
     setUp(true);
     try {
       const fd = new FormData();
       fd.append("file", file);
       
-      // Upload file → returns { path }
+      console.log("Uploading image for plant ID:", targetPlantId);
+      
       const r = await api(`/api/admin/uploads/plant-image`, { 
         method: "POST", 
         body: fd
       });
       
-      // Update plant with new image path
-      await api(`/api/admin/plants/${plantId}`, { 
+      console.log("Upload response:", r);
+      
+      await api(`/api/admin/plants/${targetPlantId}`, { 
         method: "PUT", 
         body: { image_hero: r.path } 
       });
@@ -609,13 +630,22 @@ function PlantImages({ plantId, currentPath, onUpdated }) {
       setFile(null);
       setPreviewUrl(null);
       onUpdated?.(r.path);
-      alert("Image uploaded successfully!");
+      console.log("Image uploaded successfully");
+      return true;
     } catch (e) {
-      alert(`Upload failed: ${e.message}`);
+      console.error("Upload failed:", e);
+      throw e;
     } finally { 
       setUp(false); 
     }
   }
+
+  // Expose upload function and file state to parent
+  useImperativeHandle(ref, () => ({
+    upload,
+    hasFile: !!file,
+    isUploading: uploading
+  }));
 
   return (
     <Card className="mt-5 p-4">
@@ -656,22 +686,23 @@ function PlantImages({ plantId, currentPath, onUpdated }) {
         </div>
         
         <div className="flex items-center gap-2">
-          <Button 
-            onClick={upload} 
-            disabled={!file || uploading}
-            className="flex-1"
-          >
-            {uploading ? (
-              <>
-                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
-                </svg>
-                Uploading...
-              </>
-            ) : "Upload Image"}
-          </Button>
-          
+          {plantId && (
+            <Button 
+              onClick={() => upload()} 
+              disabled={!file || uploading}
+              className="flex-1"
+            >            
+              {uploading ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                  </svg>
+                  Uploading...
+                </>
+              ) : "Upload Image"}
+            </Button>
+          )}
           {file && (
             <OutlineButton 
               onClick={() => {
@@ -685,12 +716,17 @@ function PlantImages({ plantId, currentPath, onUpdated }) {
         </div>
         
         <div className="text-xs text-slate-500">
-          Supported: JPG, PNG, WebP • Max size: 5MB
+          {plantId 
+            ? "Supported: JPG, PNG, WebP • Max size: 5MB"
+            : "Save the plant first to upload an image"
+          }
         </div>
       </div>
     </Card>
   );
-}
+});
+
+PlantImages.displayName = 'PlantImages';
 
 function PlantsPage() {
   const [rows, setRows]     = useState([]);

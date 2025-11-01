@@ -113,6 +113,7 @@ def public_list_plants():
 def public_get_plant(plant_id: int):
     db = get_db()
     row = db.execute("SELECT * FROM plants WHERE id=?", (plant_id,)).fetchone()
+    print("Fetched plant row:", row)
     if not row:
         return jsonify({"error": "Not found"}), 404
     return jsonify(_row_to_obj(row))
@@ -128,7 +129,7 @@ def serve_file(relpath):
     return send_from_directory(directory, filename)
 
 # ------------------- ADMIN CRUD (JWT protected) -------------------
-@admin_plants_bp.post("/admin/plants")
+@admin_plants_bp.post("/plants")
 @jwt_required()
 def admin_create_plant():
     print("Create plant request received")
@@ -156,7 +157,6 @@ def admin_create_plant():
     except Exception as e:
         print("Create plant error:", e)
         return jsonify({"error": "creation failed"}), 500
-
 
 @admin_plants_bp.put("/plants/<int:plant_id>") 
 @jwt_required()
@@ -199,35 +199,51 @@ def admin_delete_plant(plant_id: int):
     return jsonify({"status": "deleted", "id": plant_id})
 
 # ------------------- optional: image upload -------------------
-ALLOWED_EXT = {"jpg", "jpeg", "png", "webp"}
+ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
+# --- keep your route name/path; replace body with this robust version ---
 @admin_plants_bp.post("/uploads/plant-image")
 @jwt_required()
 def admin_upload_plant_image():
     """
-    Upload an image and return a file path you can store in `plants.image_hero`.
-    Client then calls PUT /admin/plants/:id with {"image_hero": "<returned_path>"}.
+    Accepts multipart/form-data with field 'file'.
+    Saves into FILE_ROOT (== MEDIA_ROOT) and returns {"path": "<filename>"}.
+    FE then sets image_hero = IMAGE_LOCAL_PATH + "/" + <filename>.
     """
-    print("Upload request received")
     try:
+        print("Upload plant image request received")
+        print(f"Request files: {request.files}")
+        print(f"Request form: {request.form}")
+        print(f"Content-Type: {request.content_type}")
         if "file" not in request.files:
             return jsonify({"error": "file missing"}), 400
-        f = request.files["file"]
-        if not f.filename:
+
+        file = request.files["file"]
+        if not file or not file.filename.strip():
             return jsonify({"error": "filename missing"}), 400
 
-        ext = f.filename.rsplit(".", 1)[-1].lower()
+        # extension check
+        name = secure_filename(file.filename)
+        _, ext = os.path.splitext(name)
+        ext = ext.lower()
         if ext not in ALLOWED_EXT:
-            return jsonify({"error": "unsupported file type"}), 400
+            return jsonify({"error": f"unsupported file type {ext}"}), 400
 
-        root = current_app.config.get("FILE_ROOT", os.path.join(current_app.root_path, "files"))
+        # resolve root
+        root = current_app.config.get("MEDIA_ROOT")
         os.makedirs(root, exist_ok=True)
 
-        safe_name = secure_filename(f.filename)
-        save_path = os.path.join(root, safe_name)
-        f.save(save_path)
-        rel_path = os.path.relpath(save_path, root).replace("\\", "/")
-        return jsonify({"path": rel_path})
+        # de-dup
+        final = name
+        stem, ext = os.path.splitext(name)
+        i = 1
+        while os.path.exists(os.path.join(root, final)):
+            final = f"{stem}_{i}{ext}"
+            i += 1
+
+        file.save(os.path.join(root, final))
+        return jsonify({"path": final}), 201
     except Exception as e:
-        print("Upload error:", e)
-        return jsonify({"error": "upload failed."}), 500
+        print(e)
+        current_app.logger.exception("Upload failed")
+        return jsonify({"error": "upload failed"}), 500
