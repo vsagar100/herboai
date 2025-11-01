@@ -40,29 +40,31 @@ def create_admin():
 @admin_auth_bp.post("/login")
 def admin_login():
     data = request.get_json() or {}
-    username = data.get("username", "").strip().lower()
-    password = data.get("password", "").strip()
-
-    print("Login attempt for user:", username)
+    username = data.get("username", "").strip()
+    password = data.get("password", "")
+    
+    if not username or not password:
+        return jsonify({"error": "Missing credentials"}), 400
+    
     db = get_db()
-    row = db.execute(
-        "SELECT id, username, email, password_hash, is_active FROM admin_users WHERE username=?", (username,)
+    user = db.execute(
+        "SELECT * FROM admin_users WHERE username = ?", (username,)
     ).fetchone()
-    print(row)
-    if not row:
+    
+    if not user:
         return jsonify({"error": "Invalid credentials"}), 401
-    if not row["is_active"]:
-        return jsonify({"error": "User deactivated"}), 403
-    if not check_password_hash(row["password_hash"], password):
+    
+    # Verify password
+    if not check_password_hash(user["password_hash"], password):
         return jsonify({"error": "Invalid credentials"}), 401
-
-    token = create_access_token(
-        identity={"id": row["id"], "username": row["username"] },
-        expires_delta=timedelta(hours=12),
-    )
-
-    return jsonify({"token": token, "name": row["username"], "is_active": row["is_active"]})
-
+    
+    # IMPORTANT: Use string as identity, not dict
+    token = create_access_token(identity=username)  # <-- Changed from object to string
+    
+    return jsonify({
+        "token": token,
+        "username": username
+    }), 200
 
 # --------------------------------------------
 # AUTH CHECK
@@ -70,5 +72,20 @@ def admin_login():
 @admin_auth_bp.get("/me")
 @jwt_required()
 def admin_me():
-    user = get_jwt_identity()
-    return jsonify(user)
+    username = get_jwt_identity()  # This is now a string
+    
+    # Fetch user details from DB
+    db = get_db()
+    user = db.execute(
+        "SELECT id, username FROM admin_users WHERE username = ?", 
+        (username,)
+    ).fetchone()
+    
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    
+    return jsonify({
+        "id": user["id"],
+        "username": user["username"],
+        "is_admin": True
+    })

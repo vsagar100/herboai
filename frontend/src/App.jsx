@@ -1,6 +1,5 @@
 import React, { useEffect } from "react";
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
-import axios from "axios";
 import Header from "./components/Header";
 import Sidebar from "./components/Sidebar";
 import Footer from "./components/Footer";
@@ -10,7 +9,6 @@ import ChatInterface from "./pages/ChatInterface";
 import AdminPanel from "./pages/AdminPanel";
 
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "http://localhost:5000";
-const api = axios.create({ baseURL: `${API_ORIGIN}/api`, withCredentials: true });
 
 function AppShell({ children }) {
   return (
@@ -27,7 +25,11 @@ function AppShell({ children }) {
 
 export default function App() {
   useEffect(() => {
-    api.get("/health").catch(() => {});
+    // Health check - note the endpoint is /api/health (or change to /health if you prefer)
+    fetch(`${API_ORIGIN}/api/health`)
+      .then(r => r.json())
+      .then(d => console.log("Health:", d))
+      .catch(e => console.warn("Health check failed:", e.message));
   }, []);
 
   return (

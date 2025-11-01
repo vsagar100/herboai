@@ -2,13 +2,26 @@ import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { Leaf, Menu, X, Globe, ChevronDown, Shield, LogOut } from "lucide-react";
-import axios from "axios";
 
 import { useGlobalState } from "../store";
 import { translations } from "../i18n";
 
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "http://localhost:5000";
-const api = axios.create({ baseURL: `${API_ORIGIN}/api`, withCredentials: true });
+
+// Unified API helper - matches AdminPanel.jsx
+async function api(path, { method = "GET", body, auth = true } = {}) {
+  const token = localStorage.getItem("herboai_token");
+  const res = await fetch(`${API_ORIGIN}${path}`, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      ...(auth && token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw new Error(`${res.status}`);
+  return res.json();
+}
 
 export default function Header() {
   const [state, s] = useGlobalState();
@@ -26,12 +39,22 @@ export default function Header() {
   ];
 
   const probeSession = async () => {
+    const token = localStorage.getItem("herboai_token");
+    if (!token) {
+      setIsAdmin(false);
+      s?.setIsAdmin && s.setIsAdmin(false);
+      setChecking(false);
+      return;
+    }
+
     try {
-      const { data } = await api.get("/auth/me");
-      const flag = !!data?.is_admin;
+      const data = await api("/api/auth/me");
+      const flag = !!data?.id; // User exists = logged in
       setIsAdmin(flag);
       s?.setIsAdmin && s.setIsAdmin(flag);
     } catch {
+      // Token invalid/expired - clear it
+      localStorage.removeItem("herboai_token");
       setIsAdmin(false);
       s?.setIsAdmin && s.setIsAdmin(false);
     } finally {
@@ -39,18 +62,19 @@ export default function Header() {
     }
   };
 
-  // 1) check on mount
-  useEffect(() => { probeSession(); /* eslint-disable-next-line */ }, []);
+  // Single check on mount and route changes
+  useEffect(() => {
+    probeSession();
+    // eslint-disable-next-line
+  }, [location.pathname]);
 
-  // 2) check whenever route changes (e.g., after login redirect)
-  useEffect(() => { probeSession(); /* eslint-disable-next-line */ }, [location.pathname]);
-
-  // 3) react instantly to login/logout broadcasts
+  // Listen for auth changes (login/logout from AdminPanel)
   useEffect(() => {
     const onAuthChanged = (e) => {
       const flag = !!e?.detail?.is_admin;
       setIsAdmin(flag);
       s?.setIsAdmin && s.setIsAdmin(flag);
+      setChecking(false);
     };
     window.addEventListener("auth:changed", onAuthChanged);
     return () => window.removeEventListener("auth:changed", onAuthChanged);
@@ -58,9 +82,12 @@ export default function Header() {
   }, []);
 
   const doLogout = async () => {
-    try { await api.post("/auth/logout", {}); } catch {}
-    // broadcast change so other tabs/components can react
+    // Clear token
+    localStorage.removeItem("herboai_token");
+    
+    // Broadcast change
     window.dispatchEvent(new CustomEvent("auth:changed", { detail: { is_admin: false } }));
+    
     setIsAdmin(false);
     s?.setIsAdmin && s.setIsAdmin(false);
     navigate("/");
@@ -99,7 +126,7 @@ export default function Header() {
 
           {/* Right: Admin/Logout + Language */}
           <div className="flex items-center gap-3">
-            {/* Show Admin Panel only when NOT logged in */}
+            {/* Show Admin Panel link only when NOT logged in */}
             {!checking && !isAdmin && (
               <Link
                 to="/admin"

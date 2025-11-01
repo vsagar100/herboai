@@ -33,9 +33,12 @@ def _rowdict(row):
 
 @bp.get("/plants")
 def plants():
+    print("Listing plants")
     q = request.args.get("q")
+    print(f"Search plants with q={q}")
     page, size, offset = get_pagination()
     data = list_plants(q, size, offset)
+    print(data)
     return {"page": page, "size": size, "items": data["items"], "count": data["count"]}, 200
 
 @bp.get("/plants/<int:plant_id>")

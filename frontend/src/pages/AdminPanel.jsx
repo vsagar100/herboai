@@ -1,22 +1,15 @@
+// src/AdminPanel.jsx — Full replacement (Vite + React 18 + Tailwind)
+// Follows your existing architecture (Auth → AdminShell → pages + DataGrid)
+
 import React, { useEffect, useMemo, useState } from "react";
 
-/**
- * HerboAI — Admin Panel (Single-file scaffold)
- * --------------------------------------------
- * Drop this file into: src/admin/AdminPanel.jsx
- * Wire a route in App.jsx to render <AdminPanel /> at "/admin".
- *
- * Glossy, fluid UI using Tailwind. No external libs required.
- * Targets the finalized backend (Flask) endpoints.
- *
- * NOTE: Safe env fallback handling to avoid `import.meta.env` access errors
- * in sandboxes/builds where it's undefined.
- */
-
-// ------------------ API Client ------------------
-// Guard access to import.meta.env to avoid runtime errors in environments
-// where Vite's env injection isn't present.
-const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "http://localhost:5000";
+// ------------------ API Client & Env ------------------
+const API_ORIGIN =
+  (typeof window !== "undefined" && window.__HERBOAI_API_ORIGIN__) ||
+  (import.meta?.env?.VITE_API_ORIGIN) ||
+  "http://localhost:5000";
+const IMAGE_LOCAL_PATH = (import.meta?.env?.MEDIA_ROOT) ||
+  "static/plant_images";
 
 async function api(path, { method = "GET", body, auth = true, headers = {} } = {}) {
   const token = localStorage.getItem("herboai_token");
@@ -39,7 +32,7 @@ async function api(path, { method = "GET", body, auth = true, headers = {} } = {
   return ct.includes("application/json") ? res.json() : res.text();
 }
 
-// --------------- Small UI Toolkit ---------------
+// ------------------ Small UI Toolkit ------------------
 function Button({ children, className = "", ...props }) {
   return (
     <button
@@ -48,7 +41,6 @@ function Button({ children, className = "", ...props }) {
     >{children}</button>
   );
 }
-
 function OutlineButton({ children, className = "", ...props }) {
   return (
     <button
@@ -57,76 +49,130 @@ function OutlineButton({ children, className = "", ...props }) {
     >{children}</button>
   );
 }
-
 function Input({ className = "", ...props }) {
-  return <input className={`w-full rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm outline-none focus:ring-2 focus:ring-emerald-200 ${className}`} {...props} />
+  return (
+    <input
+      className={`w-full rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm outline-none focus:ring-2 focus:ring-emerald-200 ${className}`}
+      {...props}
+    />
+  );
 }
-
 function TextArea({ className = "", ...props }) {
-  return <textarea className={`w-full rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm outline-none focus:ring-2 focus:ring-emerald-200 ${className}`} {...props} />
+  return (
+    <textarea
+      className={`w-full rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm outline-none focus:ring-2 focus:ring-emerald-200 ${className}`}
+      {...props}
+    />
+  );
 }
-
 function Select({ className = "", children, ...props }) {
   return (
-    <select className={`w-full rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm outline-none focus:ring-2 focus:ring-emerald-200 ${className}`} {...props}>
+    <select
+      className={`w-full rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm outline-none focus:ring-2 focus:ring-emerald-200 ${className}`}
+      {...props}
+    >
       {children}
     </select>
   );
 }
-
 function Card({ children, className = "" }) {
-  return <div className={`rounded-3xl bg-white/90 shadow-lg ring-1 ring-slate-100 backdrop-blur ${className}`}>{children}</div>
+  return <div className={`rounded-2xl bg-white shadow ring-1 ring-slate-100 ${className}`}>{children}</div>;
 }
-
 function Section({ title, actions, children }) {
   return (
-    <Card className="p-5">
+    <section className="mb-8">
       <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-xl font-semibold text-slate-800">{title}</h3>
-        <div>{actions}</div>
+        <h2 className="text-xl font-semibold">{title}</h2>
+        {actions}
       </div>
-      {children}
-    </Card>
+      <div className="rounded-3xl bg-white p-4 shadow ring-1 ring-slate-100">
+        {children}
+      </div>
+    </section>
   );
 }
-
-function Pill({ children, color = "emerald" }) {
-  const colorMap = {
-    emerald: "bg-emerald-50 text-emerald-700 border-emerald-200",
-    slate: "bg-slate-50 text-slate-700 border-slate-200",
-    amber: "bg-amber-50 text-amber-800 border-amber-200",
-    rose: "bg-rose-50 text-rose-700 border-rose-200",
-    sky: "bg-sky-50 text-sky-700 border-sky-200",
-  };
-  return (
-    <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${colorMap[color] || colorMap.emerald}`}>{children}</span>
-  );
-}
-
-function Toast({ kind = "success", text, onClose }) {
-  const palette = kind === "error" ? "bg-rose-600" : kind === "warn" ? "bg-amber-500" : "bg-emerald-600";
-  useEffect(() => {
-    const t = setTimeout(onClose, 3200);
-    return () => clearTimeout(t);
+function Toast({ text, kind="info", onClose }) {
+  const palette = kind==="error" ? "bg-rose-500" : "bg-emerald-600";
+  useEffect(()=>{
+    const t = setTimeout(onClose, 3000);
+    return ()=>clearTimeout(t);
   }, [onClose]);
+  return <div className={`fixed bottom-6 right-6 z-50 rounded-2xl ${palette} px-4 py-3 text-white shadow-xl`}>{text}</div>;
+}
+
+// ------------------ Admin Layout ------------------
+const NAV = [
+  { key: "plants", label: "Plants" },
+  { key: "diseases", label: "Diseases" },
+  { key: "preparations", label: "Preparations" },
+  { key: "systems", label: "AYUSH Systems" },
+];
+
+function AdminShell({ current, setCurrent, children }) {
+  const SHOW_RUNTIME_TEST = import.meta?.env?.DEV &&
+    (import.meta.env.VITE_SHOW_RUNTIME_TEST ?? "true") !== "false";
+
   return (
-    <div className={`fixed bottom-6 right-6 z-50 rounded-2xl ${palette} px-4 py-3 text-white shadow-xl`}>{text}</div>
+    <div className="min-h-screen bg-gradient-to-b from-emerald-50 via-white to-white">
+      <header className="sticky top-0 z-40 border-b border-slate-100 bg-white/70 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow">🌿</div>
+            <div>
+              <div className="text-sm font-semibold text-emerald-700">HerboAI</div>
+              <div className="text-xs text-slate-500">Admin Panel</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <OutlineButton onClick={()=>{ localStorage.removeItem("herboai_token"); location.reload(); }}>Logout</OutlineButton>
+          </div>
+        </div>
+      </header>
+
+      <div className="mx-auto grid max-w-7xl grid-cols-1 gap-6 px-4 py-6 md:grid-cols-12">
+        <aside className="md:col-span-3 lg:col-span-2">
+          <Card className="p-3">
+            <nav className="space-y-1">
+              {NAV.map(item => (
+                <button
+                  key={item.key}
+                  className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition ${current===item.key ? "bg-emerald-600 text-white shadow" : "hover:bg-emerald-50 text-slate-700"}`}
+                  onClick={()=>setCurrent(item.key)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </nav>
+          </Card>
+        </aside>
+
+        <main className="md:col-span-9 lg:col-span-10">
+          {children}
+        </main>
+      </div>
+
+      <footer className="border-t border-slate-100 py-6 text-center text-sm text-slate-500">© {new Date().getFullYear()} HerboAI </footer>
+    </div>
   );
 }
 
-// --------------- Auth (simple) ---------------
+// ------------------ Auth ------------------
 function Login({ onLoggedIn }) {
   const [username, setUserName] = useState("");
   const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState("");
+  const [loading, setLoading]   = useState(false);
+  const [err, setErr]           = useState("");
 
-  async function submit(e){
+  async function submit(e) {
     e.preventDefault();
     setLoading(true); setErr("");
     try {
       const res = await api("/api/auth/login", { method: "POST", auth: false, body: { username, password } });
-      if (res && res.token) localStorage.setItem("herboai_token", res.token);
+      if (res?.token) {
+        localStorage.setItem("herboai_token", res.token);
+        // Broadcast auth change (matches your earlier pattern) :contentReference[oaicite:3]{index=3}
+        window.dispatchEvent(new CustomEvent("auth:changed", { detail: { is_admin: true }}));
+      }
       onLoggedIn();
     } catch (e) {
       setErr(e.message);
@@ -147,15 +193,15 @@ function Login({ onLoggedIn }) {
             <Input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••••" />
           </div>
           {err && <div className="text-sm text-rose-600">{err}</div>}
-          <Button disabled={loading} type="submit">{loading ? "Signing in..." : "Sign in"}</Button>
+          <Button disabled={loading} type="submit">{loading ? "Signing in…" : "Sign in"}</Button>
         </form>
       </Card>
     </div>
   );
 }
 
-// ------------- Generic DataGrid -------------
-function DataGrid({ columns, rows, page, size, total, onPage, onSize, onEdit, onDelete, loading }){
+// ------------------ DataGrid ------------------
+function DataGrid({ columns, rows, page, size, total, onPage, onSize, onEdit, onDelete, loading }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-100">
       <table className="min-w-full divide-y divide-slate-100">
@@ -169,13 +215,15 @@ function DataGrid({ columns, rows, page, size, total, onPage, onSize, onEdit, on
         </thead>
         <tbody className="divide-y divide-slate-100 bg-white/70">
           {loading ? (
-            <tr><td className="px-4 py-6 text-center text-slate-500" colSpan={columns.length+1}>Loading...</td></tr>
+            <tr><td className="px-4 py-6 text-center text-slate-500" colSpan={columns.length+1}>Loading…</td></tr>
           ) : rows.length === 0 ? (
             <tr><td className="px-4 py-6 text-center text-slate-500" colSpan={columns.length+1}>No records</td></tr>
           ) : rows.map(r => (
             <tr key={r.id} className="hover:bg-emerald-50/30">
               {columns.map(c => (
-                <td key={c.key} className="px-4 py-3 text-sm text-slate-800">{c.render ? c.render(r[c.key], r) : (r[c.key] ?? "")}</td>
+                <td key={c.key} className="px-4 py-3 text-sm text-slate-800">
+                  {c.render ? c.render(r[c.key], r) : (r[c.key] ?? "")}
+                </td>
               ))}
               <td className="px-4 py-3 text-right">
                 <OutlineButton className="mr-2" onClick={()=>onEdit?.(r)}>Edit</OutlineButton>
@@ -192,8 +240,8 @@ function DataGrid({ columns, rows, page, size, total, onPage, onSize, onEdit, on
             {[5,10,20,50,100].map(n => <option key={n} value={n}>{n}/page</option>)}
           </Select>
           <div className="flex items-center gap-2">
-            <OutlineButton onClick={()=>onPage?.(Math.max(1, page-1))}>Prev</OutlineButton>
-            <OutlineButton onClick={()=>onPage?.(page+1)}>Next</OutlineButton>
+            <OutlineButton onClick={()=>onPage?.(Math.max(1, page-1))} disabled={page<=1}>Prev</OutlineButton>
+            <OutlineButton onClick={()=>onPage?.(page+1)} disabled={page>=Math.max(1, Math.ceil((total||0)/size))}>Next</OutlineButton>
           </div>
         </div>
       </div>
@@ -201,175 +249,560 @@ function DataGrid({ columns, rows, page, size, total, onPage, onSize, onEdit, on
   );
 }
 
-// ------------- Plants CRUD -------------
-function PlantForm({ initial, onClose, onSaved }) {
-  const [form, setForm] = useState(() => initial || { botanical_name: "", common_name_en: "", ayush_system_id: 1, description: "" });
-  const [saving, setSaving] = useState(false);
-  const isEdit = !!initial?.id;
+// ------------------ Helpers ------------------
+const resolveImageUrl = (path) => {
+  // Same resolver pattern as PlantModal.jsx so /files/... works across the app :contentReference[oaicite:4]{index=4}
+  if (!path) return "";
+  if (/^https?:\/\//i.test(path)) return path;
+  const clean = path.startsWith("/") ? path.slice(1) : path;
+  return `${API_ORIGIN}/${clean.startsWith("files/") ? clean : `files/${clean}`}`;
+};
 
-  function set(k, v){ setForm(prev => ({...prev, [k]: v})); }
-
-  async function save(){
-    setSaving(true);
-    try {
-      const path = isEdit ? `/admin/plants/${initial.id}` : "/admin/plants";
-      const method = isEdit ? "PUT" : "POST";
-      const out = await api(path, { method, body: form });
-      onSaved(out);
-    } catch(e){ alert(e.message); }
-    finally { setSaving(false); }
-  }
-
+// ------------------ Plants ------------------
+function ConfirmModal({ open, title="Confirm", message, onCancel, onConfirm }) {
+  if (!open) return null;
   return (
-    <Card className="p-6">
-      <div className="mb-4 flex items-center justify-between">
-        <h4 className="text-lg font-semibold">{isEdit ? "Edit Plant" : "New Plant"}</h4>
-        <button className="text-slate-500 hover:text-slate-700" onClick={onClose}>✕</button>
-      </div>
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <div>
-          <label className="mb-1 block text-sm font-medium">Common Name (EN)</label>
-          <Input value={form.common_name_en||""} onChange={e=>set("common_name_en", e.target.value)} />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onCancel}>
+      <div onClick={e=>e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white shadow-2xl ring-1 ring-slate-100">
+        <div className="border-b px-5 py-4">
+          <h3 className="text-lg font-semibold">{title}</h3>
         </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium">Botanical Name</label>
-          <Input value={form.botanical_name||""} onChange={e=>set("botanical_name", e.target.value)} />
-        </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium">AYUSH System</label>
-          <Select value={form.ayush_system_id||1} onChange={e=>set("ayush_system_id", Number(e.target.value))}>
-            {/* Systems fetched by parent; fallback common IDs */}
-            <option value={1}>Ayurveda</option>
-            <option value={2}>Yoga</option>
-            <option value={3}>Unani</option>
-            <option value={4}>Siddha</option>
-            <option value={5}>Homeopathy</option>
-          </Select>
-        </div>
-        <div className="md:col-span-2">
-          <label className="mb-1 block text-sm font-medium">Description</label>
-          <TextArea rows={4} value={form.description||""} onChange={e=>set("description", e.target.value)} />
+        <div className="p-5 text-slate-700">{message}</div>
+        <div className="flex justify-end gap-2 px-5 pb-5">
+          <OutlineButton onClick={onCancel}>Cancel</OutlineButton>
+          <Button className="!bg-gradient-to-b from-rose-500 to-rose-600" onClick={onConfirm}>Delete</Button>
         </div>
       </div>
-      <div className="mt-5 flex justify-end">
-        <OutlineButton className="mr-2" onClick={onClose}>Cancel</OutlineButton>
-        <Button onClick={save} disabled={saving}>{saving?"Saving...":"Save"}</Button>
-      </div>
-    </Card>
+    </div>
   );
 }
 
-function PlantImages({ plantId }){
-  const [list, setList] = useState([]);
-  const [file, setFile] = useState(null);
-  const [loading, setLoading] = useState(true);
+function PlantFormModal({ open, initial, onClose, onSaved }) {
+  const [form, setForm] = useState({});
+  const [saving, setSaving] = useState(false);
 
-  async function load(){
-    setLoading(true);
-    try { const r = await api(`/admin/plants/${plantId}/media`); setList(r.items || r || []); } catch(e){ console.error(e); }
-    finally{ setLoading(false); }
+  // Initialize form when modal opens or initial changes
+  useEffect(() => {
+    if (!open) return;
+    const init = initial || {};
+    // If dosha_effect is an object/array, show JSON text in the textarea
+    if (init && typeof init.dosha_effect === "object" && init.dosha_effect !== null) {
+      init.dosha_effect = JSON.stringify(init.dosha_effect, null, 2);
+    }
+    setForm(init);
+  }, [open, initial]);
+
+  function setField(k, v) { 
+    setForm(f => ({ ...f, [k]: v })); 
   }
-  useEffect(()=>{ if(plantId) load(); },[plantId]);
 
-  async function upload(){
+  async function handleSave(e) {
+  e?.preventDefault();
+  
+  console.log("Save clicked, form data:", form); // Debug log
+  
+  if (!form.botanical_name?.trim()) {
+    alert("Botanical name is required");
+    return;
+  }
+  
+  setSaving(true);
+  try {
+    // Create a clean payload - exclude read-only and deprecated fields
+    const { 
+      id, 
+      created_at, 
+      updated_at, 
+      ayush_system_id,  // deprecated
+      ...cleanData 
+    } = form;
+    
+    const payload = { ...cleanData };
+    
+    // Parse JSON fields if they're strings
+    if (typeof payload.dosha_effect === "string") {
+      const s = payload.dosha_effect.trim();
+      if ((s.startsWith("{") && s.endsWith("}")) || (s.startsWith("[") && s.endsWith("]"))) {
+        try { 
+          payload.dosha_effect = JSON.parse(s); 
+        } catch(err) { 
+          console.warn("Invalid JSON in dosha_effect, keeping as string");
+        }
+      }
+    }
+    
+    // Remove null values to avoid sending unnecessary data
+    Object.keys(payload).forEach(key => {
+      if (payload[key] === null || payload[key] === undefined) {
+        delete payload[key];
+      }
+    });
+
+    // Determine if creating or updating
+    const isNew = !form.id;
+    const method = isNew ? "POST" : "PUT";
+    const path = isNew ? "/api/admin/plants" : `/api/admin/plants/${form.id}`;
+    
+    console.log("API call:", method, path, payload); // Debug log
+    
+    // Call the API
+    const result = await api(path, { method, body: payload });
+    
+    console.log("Save successful:", result); // Debug log
+    
+    // Notify parent and close
+    onSaved?.(result);
+    onClose?.();
+  } catch(e) {
+    console.error("Save error:", e); // Debug log
+    alert(`Save failed: ${e.message}`);
+  } finally { 
+    setSaving(false); 
+  }
+}
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} className="w-full max-w-5xl rounded-2xl bg-white shadow-2xl ring-1 ring-slate-100">
+        <div className="flex items-center justify-between border-b px-5 py-4">
+          <h3 className="text-lg font-semibold">{form.id ? "Edit Plant" : "Add Plant"}</h3>
+          <button className="rounded-full p-2 hover:bg-slate-100" onClick={onClose} aria-label="Close">✕</button>
+        </div>
+
+        <form onSubmit={handleSave}>
+          <div className="max-h-[70vh] overflow-y-auto p-5">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-sm font-medium">Botanical Name *</label>
+                <Input 
+                  value={form.botanical_name || ""} 
+                  onChange={e => setField("botanical_name", e.target.value)}
+                  placeholder="e.g., Gymnema sylvestre"
+                  required
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">Common Name (EN)</label>
+                <Input 
+                  value={form.common_name_en || ""} 
+                  onChange={e => setField("common_name_en", e.target.value)}
+                  placeholder="e.g., Gudmar"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">Common Name (HI)</label>
+                <Input 
+                  value={form.common_name_hi || ""} 
+                  onChange={e => setField("common_name_hi", e.target.value)} 
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">Common Name (MR)</label>
+                <Input 
+                  value={form.common_name_mr || ""} 
+                  onChange={e => setField("common_name_mr", e.target.value)} 
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">Sanskrit</label>
+                <Input 
+                  value={form.sanskrit_name || ""} 
+                  onChange={e => setField("sanskrit_name", e.target.value)} 
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">Family</label>
+                <Input 
+                  value={form.family || ""} 
+                  onChange={e => setField("family", e.target.value)}
+                  placeholder="e.g., Asclepiadaceae" 
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">AYUSH System</label>
+                <Select 
+                  value={form.ayush_system || "Ayurveda"} 
+                  onChange={e => setField("ayush_system", e.target.value)}
+                >
+                  <option>Ayurveda</option>
+                  <option>Yoga</option>
+                  <option>Unani</option>
+                  <option>Siddha</option>
+                  <option>Homeopathy</option>
+                  <option>Multiple</option>
+                </Select>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">Cultivation Status</label>
+                <Input 
+                  value={form.cultivation_status || ""} 
+                  onChange={e => setField("cultivation_status", e.target.value)} 
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-sm font-medium">Description</label>
+                <TextArea 
+                  rows={4} 
+                  value={form.description || ""} 
+                  onChange={e => setField("description", e.target.value)}
+                  placeholder="Detailed description of the plant..."
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-sm font-medium">Habitat</label>
+                <TextArea 
+                  rows={3} 
+                  value={form.habitat || ""} 
+                  onChange={e => setField("habitat", e.target.value)}
+                  placeholder="Natural habitat and growing conditions..."
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium">Parts Used (comma-separated)</label>
+                <Input 
+                  value={Array.isArray(form.parts_used) ? form.parts_used.join(", ") : (form.parts_used || "")}
+                  onChange={e => setField("parts_used", e.target.value.split(",").map(s => s.trim()).filter(Boolean))}
+                  placeholder="e.g., Leaves, Root, Stem"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">Rasa (comma-separated)</label>
+                <Input 
+                  value={Array.isArray(form.rasa) ? form.rasa.join(", ") : (form.rasa || "")}
+                  onChange={e => setField("rasa", e.target.value.split(",").map(s => s.trim()).filter(Boolean))}
+                  placeholder="e.g., Tikta, Kashaya"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">Virya</label>
+                <Input 
+                  value={form.virya || ""} 
+                  onChange={e => setField("virya", e.target.value)}
+                  placeholder="e.g., Sheet (Cold)"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">Vipaka</label>
+                <Input 
+                  value={form.vipaka || ""} 
+                  onChange={e => setField("vipaka", e.target.value)}
+                  placeholder="e.g., Katu (Pungent)"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">Guna / Properties (comma-separated)</label>
+                <Input 
+                  value={Array.isArray(form.guna) ? form.guna.join(", ") : (form.guna || "")}
+                  onChange={e => setField("guna", e.target.value.split(",").map(s => s.trim()).filter(Boolean))}
+                  placeholder="e.g., Laghu, Ruksha"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">Therapeutic Actions (comma-separated)</label>
+                <Input 
+                  value={Array.isArray(form.therapeutic_actions) ? form.therapeutic_actions.join(", ") : (form.therapeutic_actions || "")}
+                  onChange={e => setField("therapeutic_actions", e.target.value.split(",").map(s => s.trim()).filter(Boolean))}
+                  placeholder="e.g., Anti-diabetic, Digestive"
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-sm font-medium">Dosha Effect (JSON or text)</label>
+                <TextArea 
+                  rows={2} 
+                  value={form.dosha_effect || ""} 
+                  onChange={e => setField("dosha_effect", e.target.value)}
+                  placeholder='e.g., {"Kapha": "pacifies", "Vata": "neutral", "Pitta": "neutral"}'
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-sm font-medium">Active Compounds (comma-separated)</label>
+                <Input 
+                  value={Array.isArray(form.active_compounds) ? form.active_compounds.join(", ") : (form.active_compounds || "")}
+                  onChange={e => setField("active_compounds", e.target.value.split(",").map(s => s.trim()).filter(Boolean))}
+                  placeholder="e.g., Gymnemic acid, Gurmarin"
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-sm font-medium">Classical References (comma-separated)</label>
+                <Input 
+                  value={Array.isArray(form.classical_references) ? form.classical_references.join(", ") : (form.classical_references || "")}
+                  onChange={e => setField("classical_references", e.target.value.split(",").map(s => s.trim()).filter(Boolean))}
+                  placeholder="e.g., Charaka Samhita, Bhavaprakash"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <input 
+                  id="is_endangered" 
+                  type="checkbox" 
+                  checked={!!form.is_endangered} 
+                  onChange={e => setField("is_endangered", e.target.checked)}
+                  className="h-4 w-4 rounded border-emerald-300 text-emerald-600 focus:ring-2 focus:ring-emerald-200"
+                />
+                <label htmlFor="is_endangered" className="text-sm font-medium">Endangered Species</label>
+              </div>
+            </div>
+
+            {/* Image uploader (only show after plant is saved) */}
+            {form.id && (
+              <PlantImages 
+                plantId={form.id} 
+                currentPath={form.image_hero} 
+                onUpdated={(p) => setField("image_hero", IMAGE_LOCAL_PATH + "/" + p)} 
+              />
+            )}
+          </div>
+
+          <div className="flex justify-end gap-2 border-t px-5 py-4">
+            <OutlineButton type="button" onClick={onClose}>Cancel</OutlineButton>
+            <Button type="submit" disabled={saving}>
+              {saving ? "Saving…" : "Save Plant"}
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function PlantImages({ plantId, currentPath, onUpdated }) {
+  const [file, setFile] = useState(null);
+  const [uploading, setUp] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState(null);
+  
+  // Show current image or preview of selected file
+  const displayUrl = previewUrl || (currentPath ? resolveImageUrl(currentPath) : null);
+
+  // Create preview when file is selected
+  useEffect(() => {
+    if (!file) {
+      setPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  async function upload() {
     if (!file) return;
-    const fd = new FormData();
-    fd.append("file", file);
+    setUp(true);
     try {
-      await api(`/admin/plants/${plantId}/media`, { method: "POST", body: fd, headers: {} });
-      setFile(null); load();
-    } catch(e){ alert(e.message); }
+      const fd = new FormData();
+      fd.append("file", file);
+      
+      // Upload file → returns { path }
+      const r = await api(`/api/admin/uploads/plant-image`, { 
+        method: "POST", 
+        body: fd
+      });
+      
+      // Update plant with new image path
+      await api(`/api/admin/plants/${plantId}`, { 
+        method: "PUT", 
+        body: { image_hero: r.path } 
+      });
+      
+      setFile(null);
+      setPreviewUrl(null);
+      onUpdated?.(r.path);
+      alert("Image uploaded successfully!");
+    } catch (e) {
+      alert(`Upload failed: ${e.message}`);
+    } finally { 
+      setUp(false); 
+    }
   }
 
   return (
-    <Card className="p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <h5 className="font-semibold">Images</h5>
-        <div className="flex items-center gap-2">
-          <input type="file" onChange={e=>setFile(e.target.files?.[0]||null)} />
-          <OutlineButton onClick={upload}>Upload</OutlineButton>
-        </div>
-      </div>
-      {loading ? <div className="p-6 text-slate-500">Loading...</div> : (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          {list.map((m,i)=> (
-            <div key={i} className="overflow-hidden rounded-2xl border border-slate-100">
-              <img src={`${API_ORIGIN}/${m.path || m.file_path}`} alt={m.alt_text||""} className="h-32 w-full object-cover" />
-              <div className="p-2 text-xs text-slate-600">{m.alt_text||""}</div>
+    <Card className="mt-5 p-4">
+      <div className="mb-3 font-semibold text-emerald-700">Plant Image</div>
+      
+      {displayUrl ? (
+        <div className="relative mb-3">
+          <img
+            src={displayUrl}
+            className="h-48 w-full rounded-2xl object-cover ring-2 ring-emerald-100 shadow-sm"
+            alt="Plant preview"
+          />
+          {previewUrl && (
+            <div className="absolute top-2 right-2 rounded-full bg-amber-500 px-3 py-1 text-xs font-medium text-white shadow-lg">
+              Preview - not saved yet
             </div>
-          ))}
+          )}
+        </div>
+      ) : (
+        <div className="mb-3 flex h-48 items-center justify-center rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50">
+          <div className="text-center">
+            <div className="text-4xl mb-2">🌿</div>
+            <div className="text-sm text-slate-500">No image set</div>
+          </div>
         </div>
       )}
+      
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <label className="flex-1">
+            <input 
+              type="file" 
+              accept="image/jpeg,image/jpg,image/png,image/webp" 
+              onChange={e => setFile(e.target.files?.[0] || null)}
+              className="block w-full text-sm text-slate-600 file:mr-4 file:rounded-xl file:border-0 file:bg-emerald-50 file:px-4 file:py-2 file:text-sm file:font-medium file:text-emerald-700 hover:file:bg-emerald-100"
+            />
+          </label>
+        </div>
+        
+        <div className="flex items-center gap-2">
+          <Button 
+            onClick={upload} 
+            disabled={!file || uploading}
+            className="flex-1"
+          >
+            {uploading ? (
+              <>
+                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                </svg>
+                Uploading...
+              </>
+            ) : "Upload Image"}
+          </Button>
+          
+          {file && (
+            <OutlineButton 
+              onClick={() => {
+                setFile(null);
+                setPreviewUrl(null);
+              }}
+            >
+              Clear
+            </OutlineButton>
+          )}
+        </div>
+        
+        <div className="text-xs text-slate-500">
+          Supported: JPG, PNG, WebP • Max size: 5MB
+        </div>
+      </div>
     </Card>
   );
 }
 
-function PlantsPage(){
-  const [rows, setRows] = useState([]);
-  const [page, setPage] = useState(1);
-  const [size, setSize] = useState(10);
-  const [total, setTotal] = useState(0);
-  const [q, setQ] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState(null);
-  const [toast, setToast] = useState(null);
+function PlantsPage() {
+  const [rows, setRows]     = useState([]);
+  const [page, setPage]     = useState(1);
+  const [size, setSize]     = useState(10);
+  const [q, setQ]           = useState("");
+  const [loading, setLoad]  = useState(true);
+  const [editing, setEdit]  = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [toast, setToast]   = useState(null);
+  const [total, setTotal]   = useState(0);
 
   const columns = useMemo(()=>[
-    { key: "id", header: "ID" },
+    { key: "image_hero", header: "", render: (_v, r) => {
+        const src = resolveImageUrl(r.image_hero);
+        return src ? <img src={src} alt="" className="h-12 w-16 rounded-lg object-cover ring-1 ring-slate-200" loading="lazy" /> :
+          <div className="grid h-10 w-14 place-items-center rounded-lg bg-slate-100">🌿</div>;
+      }},
     { key: "common_name_en", header: "Name" },
     { key: "botanical_name", header: "Botanical" },
-    { key: "ayush_system_id", header: "System" },
-  ],[]);
+    { key: "ayush_system", header: "System" },
+  ], []);
 
-  async function load(){
-    setLoading(true);
-    try {
-      const path = q ? `/plants?q=${encodeURIComponent(q)}&size=${size}&page=${page}` : `/plants?size=${size}&page=${page}`;
-      const r = await api(path);
-      setRows(r.items || []);
-      setTotal(r.count ?? (r.items?.length || 0));
-    } catch(e){ setToast({ kind: "error", text: e.message }); }
-    finally{ setLoading(false); }
+  async function load() {
+  setLoad(true);
+  try {
+    const r = await api(q
+      ? `/api/admin/plants?q=${encodeURIComponent(q)}&page=${page}&size=${size}`
+      : `/api/admin/plants?page=${page}&size=${size}`
+    );
+    
+    // Sort by common_name_en || botanical_name
+    const sorted = [...(r.items || [])].sort((a,b)=>{
+      const an = (a.common_name_en || a.botanical_name || "").toLowerCase();
+      const bn = (b.common_name_en || b.botanical_name || "").toLowerCase();
+      return an.localeCompare(bn);
+    });
+    
+    setRows(sorted);
+    setTotal(r.count ?? sorted.length);
+    console.log("Loaded plants:", r);
+  } catch (e) {
+    console.error("Load error:", e);
+    setToast({ kind: "error", text: `Load failed: ${e.message}` });
+  } finally { 
+    setLoad(false); 
   }
+}
 
-  useEffect(()=>{ load(); },[q, page, size]);
+  useEffect(()=>{ load(); }, [q, page, size]);
 
-  async function remove(row){
-    if(!confirm(`Delete plant #${row.id}?`)) return;
-    try { await api(`/admin/plants/${row.id}`, { method: "DELETE" }); setToast({text:"Deleted"}); load(); }
-    catch(e){ setToast({kind:"error", text:e.message}); }
+  async function remove(row) {
+    setConfirmDel(null);
+    try{
+      await api(`/api/admin/plants/${row.id}`, { method: "DELETE" });
+      setToast({ text: "Deleted" });
+      load();
+    }catch(e){
+      setToast({ kind:"error", text:e.message });
+    }
   }
 
   return (
     <div className="space-y-4">
-      <Section title="Plants" actions={<>
-        <div className="mr-2 w-64"><Input placeholder="Search..." value={q} onChange={e=>{setPage(1); setQ(e.target.value)}}/></div>
-        <Button onClick={()=>setEditing({})}>Add Plant</Button>
-      </>}>
-        <DataGrid columns={columns} rows={rows} page={page} size={size} total={total}
+      <Section
+        title="Plants"
+        actions={
+          <div className="flex items-center gap-3">
+            <div className="w-64">
+              <Input placeholder="Search…" value={q} onChange={e=>{ setPage(1); setQ(e.target.value); }} />
+            </div>
+            <Select className="w-28" value={String(size)} onChange={e=>{ setPage(1); setSize(Number(e.target.value)); }}>
+              {[5,10,20,50,100].map(n => <option key={n} value={n}>{n}/page</option>)}
+            </Select>
+            <Button onClick={()=>setEdit({})}>Add Plant</Button>
+          </div>
+        }
+      >
+        <DataGrid
+          columns={columns}
+          rows={rows}
+          page={page} size={size} total={total}
           onPage={setPage} onSize={setSize}
-          onEdit={(r)=>setEditing(r)} onDelete={remove} loading={loading} />
+          onEdit={(r)=>setEdit(r)}
+          onDelete={(r)=>setConfirmDel(r)}
+          loading={loading}
+        />
       </Section>
 
-      {editing && (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <div className="md:col-span-2">
-            <PlantForm initial={editing.id ? editing : null} onClose={()=>setEditing(null)} onSaved={()=>{setEditing(null); load(); setToast({text:"Saved"});}}/>
-          </div>
-          {editing.id && (
-            <div>
-              <PlantImages plantId={editing.id} />
-            </div>
-          )}
-        </div>
-      )}
+      {/* Add/Edit Modal */}
+      <PlantFormModal
+        open={!!editing}
+        initial={editing || null}
+        onClose={()=>setEdit(null)}
+        onSaved={()=>{ setEdit(null); setToast({ text: "Saved" }); load(); }}
+      />
+
+      {/* Delete confirm modal */}
+      <ConfirmModal
+        open={!!confirmDel}
+        title="Delete Plant"
+        message={`Delete “${confirmDel?.common_name_en || confirmDel?.botanical_name || ("#"+confirmDel?.id)}”? This cannot be undone.`}
+        onCancel={()=>setConfirmDel(null)}
+        onConfirm={()=>remove(confirmDel)}
+      />
 
       {toast && <Toast {...toast} onClose={()=>setToast(null)} />}
     </div>
   );
 }
 
-// ------------- Diseases CRUD -------------
+// ------------------ Diseases (unchanged scaffold) ------------------
 function DiseasesPage(){
   const [rows, setRows] = useState([]);
   const [page, setPage] = useState(1);
@@ -389,31 +822,34 @@ function DiseasesPage(){
   async function load(){
     setLoading(true);
     try{
-      const r = await api(q ? `/diseases?q=${encodeURIComponent(q)}&page=${page}&size=${size}` : `/diseases?page=${page}&size=${size}`);
-      setRows(r.items || []); // endpoint returns {items, count}
+      const r = await api(q ? `/pre/diseases?q=${encodeURIComponent(q)}&page=${page}&size=${size}` : `/pre/diseases?page=${page}&size=${size}`);
+      setRows(r.items || []);
     }catch(e){ setToast({kind:"error", text:e.message}); }
     finally{ setLoading(false); }
   }
   useEffect(()=>{ load(); },[q,page,size]);
 
   async function save(payload){
+    console.log("Saving disease:", payload);
     const method = payload.id ? "PUT" : "POST";
     const path = payload.id ? `/admin/diseases/${payload.id}` : "/admin/diseases";
     await api(path, { method, body: payload });
     setEditing(null); setToast({text:"Saved"}); load();
   }
   async function remove(row){
-    if(!confirm(`Delete disease #${row.id}?`)) return;
+    setEditing(null);
     await api(`/admin/diseases/${row.id}`, { method: "DELETE" });
     setToast({text:"Deleted"}); load();
   }
 
   return (
     <div className="space-y-4">
-      <Section title="Diseases" actions={<>
-        <div className="mr-2 w-64"><Input placeholder="Search..." value={q} onChange={e=>{setPage(1);setQ(e.target.value)}}/></div>
-        <Button onClick={()=>setEditing({})}>Add Disease</Button>
-      </>}>
+      <Section title="Diseases" actions={
+        <>
+          <div className="mr-2 w-64"><Input placeholder="Search…" value={q} onChange={e=>{setPage(1); setQ(e.target.value)}}/></div>
+          <Button onClick={()=>setEditing({})}>Add Disease</Button>
+        </>
+      }>
         <DataGrid columns={columns} rows={rows} page={page} size={size} total={rows.length}
           onPage={setPage} onSize={setSize} onEdit={r=>setEditing(r)} onDelete={remove} loading={loading} />
       </Section>
@@ -421,26 +857,21 @@ function DiseasesPage(){
       {editing && (
         <Card className="p-6">
           <div className="mb-4 flex items-center justify-between">
-            <h4 className="text-lg font-semibold">{editing.id?"Edit Disease":"New Disease"}</h4>
-            <button className="text-slate-500 hover:text-slate-700" onClick={()=>setEditing(null)}>✕</button>
+            <h4 className="text-lg font-semibold">{editing.id? "Edit Disease" : "Add Disease"}</h4>
           </div>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-sm font-medium">Name (EN)</label>
+            <div><label className="mb-1 block text-sm font-medium">Name</label>
               <Input defaultValue={editing.name_en||""} onChange={e=>editing.name_en=e.target.value} />
             </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium">Category</label>
+            <div><label className="mb-1 block text-sm font-medium">Category</label>
               <Input defaultValue={editing.category||""} onChange={e=>editing.category=e.target.value} />
             </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium">Severity</label>
-              <Select defaultValue={editing.severity_level||"moderate"} onChange={e=>editing.severity_level=e.target.value}>
+            <div><label className="mb-1 block text-sm font-medium">Severity</label>
+              <Select defaultValue={editing.severity_level||"mild"} onChange={e=>editing.severity_level=e.target.value}>
                 <option>mild</option><option>moderate</option><option>severe</option><option>chronic</option>
               </Select>
             </div>
-            <div className="md:col-span-2">
-              <label className="mb-1 block text-sm font-medium">Description</label>
+            <div className="md:col-span-2"><label className="mb-1 block text-sm font-medium">Description</label>
               <TextArea rows={4} defaultValue={editing.description||""} onChange={e=>editing.description=e.target.value} />
             </div>
           </div>
@@ -456,7 +887,7 @@ function DiseasesPage(){
   );
 }
 
-// ------------- Preparations CRUD (basic) -------------
+// ------------------ Preparations (unchanged scaffold) ------------------
 function PreparationsPage(){
   const [rows, setRows] = useState([]);
   const [page, setPage] = useState(1);
@@ -483,11 +914,34 @@ function PreparationsPage(){
   }
   useEffect(()=>{ load(); },[q,page,size]);
 
-  async function save(payload){
-    const method = payload.id ? "PUT" : "POST";
-    const path = payload.id ? `/admin/preparations/${payload.id}` : "/admin/preparations";
-    await api(path, { method, body: payload });
-    setEditing(null); setToast({text:"Saved"}); load();
+  async function save() {
+    setSaving(true);
+    try {
+      const payload = { ...form };
+      
+      // Parse JSON fields if they're strings
+      if (typeof payload.dosha_effect === "string") {
+        const s = payload.dosha_effect.trim();
+        if ((s.startsWith("{") && s.endsWith("}")) || (s.startsWith("[") && s.endsWith("]"))) {
+          try { payload.dosha_effect = JSON.parse(s); } catch { /* keep as string if invalid */ }
+        }
+      }
+
+      // Determine if creating or updating
+      const isNew = !payload.id;
+      const method = isNew ? "POST" : "PUT";
+      const path = isNew ? "/api/admin/plants" : `/api/admin/plants/${payload.id}`;
+      
+      // Call the API
+      const result = await api(path, { method, body: payload });
+      
+      // Show success and close
+      onSaved?.(result);
+    } catch(e) {
+      alert(`Save failed: ${e.message}`);
+    } finally { 
+      setSaving(false); 
+    }
   }
   async function remove(row){
     if(!confirm(`Delete preparation #${row.id}?`)) return;
@@ -497,10 +951,12 @@ function PreparationsPage(){
 
   return (
     <div className="space-y-4">
-      <Section title="Preparations" actions={<>
-        <div className="mr-2 w-64"><Input placeholder="Search..." value={q} onChange={e=>{setPage(1); setQ(e.target.value)}}/></div>
-        <Button onClick={()=>setEditing({})}>Add Preparation</Button>
-      </>}>
+      <Section title="Preparations" actions={
+        <>
+          <div className="mr-2 w-64"><Input placeholder="Search…" value={q} onChange={e=>{setPage(1); setQ(e.target.value)}}/></div>
+          <Button onClick={()=>setEditing({})}>Add Preparation</Button>
+        </>
+      }>
         <DataGrid columns={columns} rows={rows} page={page} size={size} total={rows.length}
           onPage={setPage} onSize={setSize} onEdit={r=>setEditing(r)} onDelete={remove} loading={loading} />
       </Section>
@@ -508,29 +964,20 @@ function PreparationsPage(){
       {editing && (
         <Card className="p-6">
           <div className="mb-4 flex items-center justify-between">
-            <h4 className="text-lg font-semibold">{editing.id?"Edit Preparation":"New Preparation"}</h4>
-            <button className="text-slate-500 hover:text-slate-700" onClick={()=>setEditing(null)}>✕</button>
+            <h4 className="text-lg font-semibold">{editing.id? "Edit Preparation" : "Add Preparation"}</h4>
           </div>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-sm font-medium">Name (EN)</label>
+            <div><label className="mb-1 block text-sm font-medium">Name</label>
               <Input defaultValue={editing.name_en||""} onChange={e=>editing.name_en=e.target.value} />
             </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium">Form Type</label>
-              <Select defaultValue={editing.form_type||"decoction"} onChange={e=>editing.form_type=e.target.value}>
-                <option>decoction</option><option>paste</option><option>powder</option><option>oil</option><option>ghrita</option><option>lehya</option><option>tablets</option>
-              </Select>
+            <div><label className="mb-1 block text-sm font-medium">Form</label>
+              <Input defaultValue={editing.form_type||""} onChange={e=>editing.form_type=e.target.value} />
             </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium">Category</label>
-              <Select defaultValue={editing.category||"single_herb"} onChange={e=>editing.category=e.target.value}>
-                <option>single_herb</option><option>compound</option><option>patent_medicine</option>
-              </Select>
+            <div><label className="mb-1 block text-sm font-medium">Category</label>
+              <Input defaultValue={editing.category||""} onChange={e=>editing.category=e.target.value} />
             </div>
-            <div className="md:col-span-2">
-              <label className="mb-1 block text-sm font-medium">Steps (JSON array)</label>
-              <TextArea rows={4} defaultValue={editing.preparation_steps||"[]"} onChange={e=>editing.preparation_steps=e.target.value} />
+            <div className="md:col-span-2"><label className="mb-1 block text-sm font-medium">Notes</label>
+              <TextArea rows={4} defaultValue={editing.notes||""} onChange={e=>editing.notes=e.target.value} />
             </div>
           </div>
           <div className="mt-5 flex justify-end">
@@ -545,14 +992,15 @@ function PreparationsPage(){
   );
 }
 
-// ------------- AYUSH Systems CRUD -------------
+// ------------------ AYUSH Systems (unchanged scaffold) ------------------
 function SystemsPage(){
   const [rows, setRows] = useState([]);
   const [name, setName] = useState("");
   const [toast, setToast] = useState(null);
 
   async function load(){
-    try{ const r = await api("/admin/systems"); setRows(r.items || r || []); } catch(e){ setToast({kind:"error", text:e.message}); }
+    try{ const r = await api("/admin/systems"); setRows(r.items || r || []); }
+    catch(e){ setToast({kind:"error", text:e.message}); }
   }
   useEffect(()=>{ load(); },[]);
 
@@ -569,14 +1017,16 @@ function SystemsPage(){
 
   return (
     <div className="space-y-4">
-      <Section title="AYUSH Systems" actions={<div className="flex items-center gap-2">
-        <Input value={name} onChange={e=>setName(e.target.value)} placeholder="Add system e.g., Ayurveda" className="w-64" />
-        <Button onClick={add}>Add</Button>
-      </div>}>
+      <Section title="AYUSH Systems" actions={
+        <div className="flex items-center gap-2">
+          <Input value={name} onChange={e=>setName(e.target.value)} placeholder="Add system e.g. Ayurveda" className="w-64" />
+          <Button onClick={add}>Add</Button>
+        </div>
+      }>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           {rows.map(r=> (
             <Card key={r.id} className="flex items-center justify-between p-4">
-              <div className="flex items-center gap-3"><Pill>{r.name}</Pill></div>
+              <div className="flex items-center gap-3"><span className="rounded-full bg-emerald-50 px-3 py-1 text-sm text-emerald-700">{r.name}</span></div>
               <OutlineButton className="!border-rose-300 !text-rose-700" onClick={()=>remove(r.id)}>Delete</OutlineButton>
             </Card>
           ))}
@@ -587,76 +1037,21 @@ function SystemsPage(){
   );
 }
 
-// ------------- Layout & Routing -------------
-const NAV = [
-  { key: "plants", label: "Plants" },
-  { key: "diseases", label: "Diseases" },
-  { key: "preparations", label: "Preparations" },
-  { key: "systems", label: "AYUSH Systems" },
-];
-
-function AdminShell({ current, setCurrent, children }){
-  return (
-    <div className="min-h-screen bg-gradient-to-b from-emerald-50 via-white to-white">
-      <header className="sticky top-0 z-40 border-b border-slate-100 bg-white/70 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow">🌿</div>
-            <div>
-              <div className="text-sm font-semibold text-emerald-700">HerboAI</div>
-              <div className="text-xs text-slate-500">Admin Panel</div>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <OutlineButton onClick={()=>{localStorage.removeItem("herboai_token"); location.reload();}}>Logout</OutlineButton>
-          </div>
-        </div>
-      </header>
-      <div className="mx-auto grid max-w-7xl grid-cols-1 gap-6 px-4 py-6 md:grid-cols-12">
-        <aside className="md:col-span-3 lg:col-span-2">
-          <Card className="p-3">
-            <nav className="space-y-1">
-              {NAV.map(item => (
-                <button key={item.key}
-                  className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition ${current===item.key?"bg-emerald-600 text-white shadow": "hover:bg-emerald-50 text-slate-700"}`}
-                  onClick={()=>setCurrent(item.key)}>
-                  {item.label}
-                </button>
-              ))}
-            </nav>
-          </Card>
-        </aside>
-        <main className="md:col-span-9 lg:col-span-10">
-          {children}
-          {/* Dev banner as runtime test case to verify env + API */}
-          <div className="mt-6 rounded-2xl border border-dashed border-emerald-200 bg-emerald-50/40 p-3 text-xs text-emerald-700">
-            <div><strong>Runtime Test</strong>: API_ORIGIN → <code>{API_ORIGIN}</code></div>
-            <div className="mt-2">If this is not your server, set <code>window.__HERBOAI_API_ORIGIN__</code> or Vite <code>VITE_API_ORIGIN</code>.</div>
-          </div>
-        </main>
-      </div>
-      <footer className="border-t border-slate-100 py-6 text-center text-sm text-slate-500">© {new Date().getFullYear()} HerboAI Admin</footer>
-    </div>
-  );
-}
-
+// ------------------ App Entrypoint ------------------
 export default function AdminPanel(){
-  const [ready, setReady] = useState(false);
+  const [ready, setReady]   = useState(false);
   const [authed, setAuthed] = useState(false);
   const [current, setCurrent] = useState("plants");
 
   useEffect(()=>{
     (async()=>{
-      try{
-        await api("/auth/me");
-        setAuthed(true);
-      }catch{
-        setAuthed(false);
-      }finally{ setReady(true); }
+      try { await api("/api/auth/me"); setAuthed(true); }
+      catch { setAuthed(false); }
+      finally { setReady(true); }
     })();
   },[]);
 
-  if (!ready) return <div className="grid min-h-screen place-items-center text-slate-500">Loading...</div>;
+  if (!ready)  return <div className="grid min-h-screen place-items-center text-slate-500">Loading…</div>;
   if (!authed) return <Login onLoggedIn={()=>setAuthed(true)} />;
 
   return (
