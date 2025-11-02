@@ -117,7 +117,6 @@ def get_plant_detail(plant_id: int):
             FROM preparation_ingredients 
             WHERE plant_id = ?
         )
-
         ORDER BY p.id
     """, (plant_id)).fetchall()
 

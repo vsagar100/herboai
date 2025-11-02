@@ -123,6 +123,7 @@ def public_get_plant(plant_id: int):
 def serve_file(relpath):
     base = current_app.config.get("FILE_ROOT", os.path.join(current_app.root_path, "files"))
     full = os.path.abspath(os.path.join(base, relpath))
+    print("Serving file request:", full)
     if not full.startswith(os.path.abspath(base)) or not os.path.exists(full):
         return jsonify({"error": "file not found"}), 404
     directory, filename = os.path.split(full)

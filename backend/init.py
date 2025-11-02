@@ -30,7 +30,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
 
     # Blueprints
     app.register_blueprint(api_bp, url_prefix="/api")
-    app.register_blueprint(files_bp, url_prefix="/files/static/plant_images") 
+    app.register_blueprint(files_bp, url_prefix="/files") 
     app.register_blueprint(admin_auth_bp, url_prefix="/api/auth")
     app.register_blueprint(admin_plants_bp, url_prefix="/api/admin")
     app.register_blueprint(admin_diseases_bp, url_prefix="/api/admin")

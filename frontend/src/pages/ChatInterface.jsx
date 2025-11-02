@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { motion } from "framer-motion";
-import { MessageCircle, Send, Sparkles } from "lucide-react";
+import { MessageCircle, Send, Sparkles, Download, FileText, FileJson, FileImage } from "lucide-react";
 import axios from "axios";
 import { jsPDF } from "jspdf";
 import PlantModal from "../components/PlantModal";
@@ -179,6 +179,9 @@ export default function ChatInterface() {
   const sessionId = useRef(`chat-${Date.now()}`).current;
   const rafRef = useRef(null);
 
+  // Download menu (ported from old file)
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(null);
+
   // Header hide/show without flicker AND without leaving empty space
   useEffect(() => {
     const el = listRef.current;
@@ -216,6 +219,71 @@ export default function ChatInterface() {
     ),
     []
   );
+
+  // ----- Download handlers (from old, adapted to new utils) -----
+  function downloadAsText(message) {
+    let content = `HerboAI - Herbal Remedy Information\n`;
+    content += `Generated: ${new Date(message.timestamp).toLocaleString()}\n`;
+    content += `${"=".repeat(60)}\n\n`;
+    content += (message.text || "").replace(/\*\*/g, "").replace(/_/g, "") + "\n\n";
+
+    if (message.relevantPlants?.length) {
+      content += `Related Plants:\n`;
+      for (const p of message.relevantPlants) {
+        content += ` - ${p.name}${p.scientific_name ? ` (${p.scientific_name})` : ""}\n`;
+      }
+      content += `\n`;
+    }
+
+    content += `\n${"=".repeat(60)}\n`;
+    content += `Disclaimer: This information is for educational purposes only.\n`;
+    content += `Always consult with a qualified healthcare professional before\n`;
+    content += `starting any herbal treatment.\n`;
+
+    saveTextFile(`herbal-remedy-${Date.now()}.txt`, content);
+  }
+
+  function downloadAsJSON(message) {
+    const data = {
+      generatedAt: message.timestamp,
+      response: message.text,
+      relevantPlants: message.relevantPlants || [],
+      metadata: {
+        source: "HerboAI",
+        language: state.language,
+        disclaimer:
+          "This information is for educational purposes only. Always consult with a qualified healthcare professional before starting any herbal treatment.",
+    }};
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `herbal-remedy-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function downloadAsPDF(message) {
+    // Title + body with a plant list appended
+    const title = "🌿 HerboAI - Herbal Remedy Information";
+    let body = (message.text || "") + "\n\n";
+    if (message.relevantPlants?.length > 0) {
+      body += "Related Medicinal Plants:\n";
+      message.relevantPlants.forEach((p, i) => {
+        body += ` ${i + 1}. ${p.name}${p.scientific_name ? ` (${p.scientific_name})` : ""}\n`;
+      });
+      body += "\n";
+    }
+    body +=
+      "⚠️ Disclaimer: This information is provided for educational purposes only and should not be considered medical advice. Always consult a qualified professional.\n";
+    saveAnswerPDF(
+      `herbal-remedy-${Date.now()}.pdf`,
+      title,
+      body,
+      { session: sessionId, lang: state.language }
+    );
+  }
+  // --------------------------------------------------------------
 
   async function send(customText) {
     const payload = (typeof customText === "string" ? customText : text).trim();
@@ -358,58 +426,125 @@ export default function ChatInterface() {
                     transition={{ duration: 0.25 }}
                     className={`flex ${m.sender === "user" ? "justify-end" : "justify-start"}`}
                   >
-                    <div
-                      className={`max-w-2xl px-5 py-4 rounded-2xl shadow ${
-                        m.sender === "user"
-                          ? "bg-gradient-to-br from-emerald-600 to-green-500 text-white"
-                          : "bg-white/70 backdrop-blur-md border border-green-100 text-gray-800"
-                      }`}
-                    >
-                      <div className="whitespace-pre-wrap leading-relaxed">{m.text}</div>
+                    <div className="max-w-2xl">
+                      <div
+                        className={`px-5 py-4 rounded-2xl shadow ${
+                          m.sender === "user"
+                            ? "bg-gradient-to-br from-emerald-600 to-green-500 text-white"
+                            : "bg-white/70 backdrop-blur-md border border-green-100 text-gray-800"
+                        }`}
+                      >
+                        <div className="whitespace-pre-wrap leading-relaxed">{m.text}</div>
 
-                      {m.relevantPlants?.length > 0 && (
-                        <div className="mt-4 border-t border-gray-200 pt-3">
-                          <p className="text-sm font-medium text-gray-600 mb-2">Related Plants</p>
-                          <div className="grid sm:grid-cols-2 gap-3">
-                            {m.relevantPlants.map((p) => {
-                              const img = p.images?.[0]?.path || p.image_url;
-                              return (
-                                <motion.button
-                                  whileHover={{ scale: 1.03 }}
-                                  whileTap={{ scale: 0.97 }}
-                                  key={p.id}
-                                  onClick={() => handlePlantClick(p.id)}
-                                  className="bg-white/60 backdrop-blur-sm border border-green-100 hover:border-green-300 rounded-xl p-3 flex gap-3 items-center shadow-sm transition-all text-left"
-                                >
-                                  {img ? (
-                                    <img
-                                      src={img}
-                                      alt={p.name}
-                                      className="w-12 h-12 rounded object-cover ring-1 ring-green-200"
-                                    />
-                                  ) : (
-                                    <div className="w-12 h-12 bg-green-50 rounded flex items-center justify-center text-gray-400 text-xs">
-                                      🌿
-                                    </div>
-                                  )}
-                                  <div className="text-left">
-                                    <div className="font-medium text-gray-800">
-                                      {p.name || p.common_name_en || p.scientific_name}
-                                    </div>
-                                    {p.scientific_name && (
-                                      <div className="text-xs text-gray-600 italic">{p.scientific_name}</div>
+                        {m.relevantPlants?.length > 0 && (
+                          <div className="mt-4 border-t border-gray-200 pt-3">
+                            <p className="text-sm font-medium text-gray-600 mb-2">Related Plants</p>
+                            <div className="grid sm:grid-cols-2 gap-3">
+                              {m.relevantPlants.map((p) => {
+                                const img = p.images?.[0]?.path || p.image_url;
+                                return (
+                                  <motion.button
+                                    whileHover={{ scale: 1.03 }}
+                                    whileTap={{ scale: 0.97 }}
+                                    key={p.id}
+                                    onClick={() => handlePlantClick(p.id)}
+                                    className="bg-white/60 backdrop-blur-sm border border-green-100 hover:border-green-300 rounded-xl p-3 flex gap-3 items-center shadow-sm transition-all text-left"
+                                  >
+                                    {img ? (
+                                      <img
+                                        src={img}
+                                        alt={p.name}
+                                        className="w-12 h-12 rounded object-cover ring-1 ring-green-200"
+                                      />
+                                    ) : (
+                                      <div className="w-12 h-12 bg-green-50 rounded flex items-center justify-center text-gray-400 text-xs">
+                                        🌿
+                                      </div>
                                     )}
-                                  </div>
-                                </motion.button>
-                              );
-                            })}
+                                    <div className="text-left">
+                                      <div className="font-medium text-gray-800">
+                                        {p.name || p.common_name_en || p.scientific_name}
+                                      </div>
+                                      {p.scientific_name && (
+                                        <div className="text-xs text-gray-600 italic">{p.scientific_name}</div>
+                                      )}
+                                    </div>
+                                  </motion.button>
+                                );
+                              })}
+                            </div>
                           </div>
+                        )}
+
+                        <div className={`text-xs mt-2 ${m.sender === "user" ? "text-green-100" : "text-gray-500"}`}>
+                          {new Date(m.timestamp).toLocaleTimeString()}
+                        </div>
+                      </div>
+
+                      {/* Download menu — only for AI messages */}
+                      {m.sender === "ai" && (
+                        <div className="mt-2 relative">
+                          <button
+                            onClick={() =>
+                              setDownloadMenuOpen(downloadMenuOpen === m.id ? null : m.id)
+                            }
+                            className="flex items-center gap-2 px-4 py-2 text-sm text-gray-600 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                          >
+                            <Download className="w-4 h-4" />
+                            <span>Download Response</span>
+                          </button>
+
+                          {downloadMenuOpen === m.id && (
+                            <motion.div
+                              initial={{ opacity: 0, y: -10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className="absolute left-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-10 w-56"
+                            >
+                              <button
+                                onClick={() => {
+                                  downloadAsText(m);
+                                  setDownloadMenuOpen(null);
+                                }}
+                                className="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center gap-3 text-sm text-gray-700"
+                              >
+                                <FileText className="w-4 h-4" />
+                                <div>
+                                  <div className="font-medium">Text File (.txt)</div>
+                                  <div className="text-xs text-gray-500">Simple text format</div>
+                                </div>
+                              </button>
+
+                              <button
+                                onClick={() => {
+                                  downloadAsPDF(m);
+                                  setDownloadMenuOpen(null);
+                                }}
+                                className="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center gap-3 text-sm text-gray-700"
+                              >
+                                <FileImage className="w-4 h-4" />
+                                <div>
+                                  <div className="font-medium">PDF Document</div>
+                                  <div className="text-xs text-gray-500">Formatted document</div>
+                                </div>
+                              </button>
+
+                              <button
+                                onClick={() => {
+                                  downloadAsJSON(m);
+                                  setDownloadMenuOpen(null);
+                                }}
+                                className="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center gap-3 text-sm text-gray-700"
+                              >
+                                <FileJson className="w-4 h-4" />
+                                <div>
+                                  <div className="font-medium">JSON Data (.json)</div>
+                                  <div className="text-xs text-gray-500">Structured response</div>
+                                </div>
+                              </button>
+                            </motion.div>
+                          )}
                         </div>
                       )}
-
-                      <div className={`text-xs mt-2 ${m.sender === "user" ? "text-green-100" : "text-gray-500"}`}>
-                        {new Date(m.timestamp).toLocaleTimeString()}
-                      </div>
                     </div>
                   </motion.div>
                 ))}
@@ -430,7 +565,7 @@ export default function ChatInterface() {
             )}
           </div>
 
-          {/* Composer (non-sticky + built-in spacer to separate from footer) */}
+          {/* Composer */}
           <div className="px-6 pt-3 pb-6 bg-white/80 backdrop-blur-md border-t shadow-inner">
             <div className="max-w-4xl mx-auto flex items-center gap-3">
               <input
@@ -453,7 +588,7 @@ export default function ChatInterface() {
             </div>
           </div>
 
-          {/* Spacer to ensure footer never crowds the composer */}
+          {/* Spacer */}
           <div className="h-6" />
         </section>
       </div>
