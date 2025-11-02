@@ -8,6 +8,8 @@ from api.routes import bp as api_bp
 from api.files import files_bp
 from api.admin_auth import admin_auth_bp
 from api.admin_plants import admin_plants_bp
+from api.admin_diseases import admin_diseases_bp
+from api.admin_preparations import admin_prep_bp
 
 def create_app(config_object: type[Config] = Config) -> Flask:
     app = Flask(__name__)
@@ -31,6 +33,8 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     app.register_blueprint(files_bp, url_prefix="/files/static/plant_images") 
     app.register_blueprint(admin_auth_bp, url_prefix="/api/auth")
     app.register_blueprint(admin_plants_bp, url_prefix="/api/admin")
+    app.register_blueprint(admin_diseases_bp, url_prefix="/api/admin")
+    app.register_blueprint(admin_prep_bp, url_prefix="/api/admin")
 
     @app.get("/api/health")
     def health():

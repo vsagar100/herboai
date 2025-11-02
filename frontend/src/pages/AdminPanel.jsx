@@ -2,6 +2,9 @@
 // Follows your existing architecture (Auth → AdminShell → pages + DataGrid)
 
 import React, { useEffect, useMemo, useState, useImperativeHandle, forwardRef, useRef  } from "react";
+import DiseaseModal from "../components/DiseaseModal.jsx";
+import PreparationModal from "../components/PreparationModal.jsx";
+
 
 // ------------------ API Client & Env ------------------
 const API_ORIGIN =
@@ -858,170 +861,154 @@ function DiseasesPage(){
   async function load(){
     setLoading(true);
     try{
-      const r = await api(q ? `/pre/diseases?q=${encodeURIComponent(q)}&page=${page}&size=${size}` : `/pre/diseases?page=${page}&size=${size}`);
+      const r = await api(
+        q
+          ? `/api/admin/diseases?q=${encodeURIComponent(q)}&page=${page}&size=${size}`
+          : `/api/admin/diseases?page=${page}&size=${size}`
+      );
       setRows(r.items || []);
     }catch(e){ setToast({kind:"error", text:e.message}); }
     finally{ setLoading(false); }
   }
   useEffect(()=>{ load(); },[q,page,size]);
 
-  async function save(payload){
-    console.log("Saving disease:", payload);
-    const method = payload.id ? "PUT" : "POST";
-    const path = payload.id ? `/admin/diseases/${payload.id}` : "/admin/diseases";
-    await api(path, { method, body: payload });
-    setEditing(null); setToast({text:"Saved"}); load();
-  }
   async function remove(row){
     setEditing(null);
     await api(`/admin/diseases/${row.id}`, { method: "DELETE" });
-    setToast({text:"Deleted"}); load();
+    setToast({text:"Deleted"}); 
+    load();
   }
 
   return (
     <div className="space-y-4">
-      <Section title="Diseases" actions={
-        <>
-          <div className="mr-2 w-64"><Input placeholder="Search…" value={q} onChange={e=>{setPage(1); setQ(e.target.value)}}/></div>
-          <Button onClick={()=>setEditing({})}>Add Disease</Button>
-        </>
-      }>
-        <DataGrid columns={columns} rows={rows} page={page} size={size} total={rows.length}
-          onPage={setPage} onSize={setSize} onEdit={r=>setEditing(r)} onDelete={remove} loading={loading} />
+      <Section
+        title="Diseases"
+        actions={
+          <>
+            <div className="mr-2 w-64">
+              <Input placeholder="Search…" value={q} onChange={e=>{setPage(1); setQ(e.target.value)}}/>
+            </div>
+            <Button onClick={()=>setEditing({})}>Add Disease</Button>
+          </>
+        }
+      >
+        <DataGrid
+          columns={columns}
+          rows={rows}
+          page={page}
+          size={size}
+          total={rows.length}
+          onPage={setPage}
+          onSize={setSize}
+          onEdit={r=>setEditing(r)}
+          onDelete={remove}
+          loading={loading}
+        />
       </Section>
 
-      {editing && (
-        <Card className="p-6">
-          <div className="mb-4 flex items-center justify-between">
-            <h4 className="text-lg font-semibold">{editing.id? "Edit Disease" : "Add Disease"}</h4>
-          </div>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div><label className="mb-1 block text-sm font-medium">Name</label>
-              <Input defaultValue={editing.name_en||""} onChange={e=>editing.name_en=e.target.value} />
-            </div>
-            <div><label className="mb-1 block text-sm font-medium">Category</label>
-              <Input defaultValue={editing.category||""} onChange={e=>editing.category=e.target.value} />
-            </div>
-            <div><label className="mb-1 block text-sm font-medium">Severity</label>
-              <Select defaultValue={editing.severity_level||"mild"} onChange={e=>editing.severity_level=e.target.value}>
-                <option>mild</option><option>moderate</option><option>severe</option><option>chronic</option>
-              </Select>
-            </div>
-            <div className="md:col-span-2"><label className="mb-1 block text-sm font-medium">Description</label>
-              <TextArea rows={4} defaultValue={editing.description||""} onChange={e=>editing.description=e.target.value} />
-            </div>
-          </div>
-          <div className="mt-5 flex justify-end">
-            <OutlineButton className="mr-2" onClick={()=>setEditing(null)}>Cancel</OutlineButton>
-            <Button onClick={()=>save(editing)}>Save</Button>
-          </div>
-        </Card>
-      )}
+      {/* ⬇️ Place the modal HERE (replaces the inline <Card> editor) */}
+      <DiseaseModal
+        open={!!editing}
+        initial={editing || null}
+        onClose={()=>setEditing(null)}
+        onSaved={()=>{
+          setEditing(null);
+          setToast({ text: "Saved" });
+          load();
+        }}
+      />
 
       {toast && <Toast {...toast} onClose={()=>setToast(null)} />}
     </div>
   );
 }
 
-// ------------------ Preparations (unchanged scaffold) ------------------
+// ------------------ Preparations (final) ------------------
 function PreparationsPage(){
-  const [rows, setRows] = useState([]);
-  const [page, setPage] = useState(1);
-  const [size, setSize] = useState(10);
-  const [q, setQ] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState(null);
-  const [toast, setToast] = useState(null);
+  const [rows, setRows] = React.useState([]);
+  const [page, setPage] = React.useState(1);
+  const [size, setSize] = React.useState(10);
+  const [q, setQ] = React.useState("");
+  const [loading, setLoading] = React.useState(true);
+  const [editing, setEditing] = React.useState(null);
+  const [toast, setToast] = React.useState(null);
+  const [total, setTotal] = React.useState(0);
 
-  const columns = [
-    { key: "id", header: "ID" },
+  const columns = React.useMemo(()=>[
     { key: "name_en", header: "Name" },
     { key: "form_type", header: "Form" },
     { key: "category", header: "Category" },
-  ];
+    { key: "timing", header: "Timing" },
+  ],[]);
 
   async function load(){
     setLoading(true);
     try{
-      const r = await api(q ? `/preparations?q=${encodeURIComponent(q)}&page=${page}&size=${size}` : `/preparations?page=${page}&size=${size}`);
+      const offset = (page - 1) * size;
+      const qs = new URLSearchParams({
+        ...(q ? { q } : {}),
+        limit: String(size),
+        offset: String(offset),
+      }).toString();
+      const r = await api(`/api/admin/preparations?${qs}`);
       setRows(r.items || []);
-    }catch(e){ setToast({kind:"error", text:e.message}); }
-    finally{ setLoading(false); }
-  }
-  useEffect(()=>{ load(); },[q,page,size]);
-
-  async function save() {
-    setSaving(true);
-    try {
-      const payload = { ...form };
-      
-      // Parse JSON fields if they're strings
-      if (typeof payload.dosha_effect === "string") {
-        const s = payload.dosha_effect.trim();
-        if ((s.startsWith("{") && s.endsWith("}")) || (s.startsWith("[") && s.endsWith("]"))) {
-          try { payload.dosha_effect = JSON.parse(s); } catch { /* keep as string if invalid */ }
-        }
-      }
-
-      // Determine if creating or updating
-      const isNew = !payload.id;
-      const method = isNew ? "POST" : "PUT";
-      const path = isNew ? "/api/admin/plants" : `/api/admin/plants/${payload.id}`;
-      
-      // Call the API
-      const result = await api(path, { method, body: payload });
-      
-      // Show success and close
-      onSaved?.(result);
-    } catch(e) {
-      alert(`Save failed: ${e.message}`);
-    } finally { 
-      setSaving(false); 
+      setTotal(Number(r.total ?? (r.items || []).length));
+    }catch(e){
+      setToast({ kind:"error", text: e.message });
+    }finally{
+      setLoading(false);
     }
   }
+  React.useEffect(()=>{ load(); }, [q, page, size]);
+
   async function remove(row){
-    if(!confirm(`Delete preparation #${row.id}?`)) return;
-    await api(`/admin/preparations/${row.id}`, { method: "DELETE" });
-    setToast({text:"Deleted"}); load();
+    if(!confirm(`Delete “${row.name_en}”? This cannot be undone.`)) return;
+    try{
+      await api(`/api/admin/preparations/${row.id}`, { method:"DELETE" });
+      setToast({ text:"Deleted" });
+      load();
+    }catch(e){
+      setToast({ kind:"error", text:e.message });
+    }
   }
 
   return (
     <div className="space-y-4">
-      <Section title="Preparations" actions={
-        <>
-          <div className="mr-2 w-64"><Input placeholder="Search…" value={q} onChange={e=>{setPage(1); setQ(e.target.value)}}/></div>
-          <Button onClick={()=>setEditing({})}>Add Preparation</Button>
-        </>
-      }>
-        <DataGrid columns={columns} rows={rows} page={page} size={size} total={rows.length}
-          onPage={setPage} onSize={setSize} onEdit={r=>setEditing(r)} onDelete={remove} loading={loading} />
+      <Section
+        title="Preparations"
+        actions={
+          <div className="flex items-center gap-3">
+            <div className="w-64">
+              <Input placeholder="Search name/classical…" value={q} onChange={e=>{ setPage(1); setQ(e.target.value); }} />
+            </div>
+            <Select className="w-28" value={String(size)} onChange={e=>{ setPage(1); setSize(Number(e.target.value)); }}>
+              {[5,10,20,50,100].map(n => <option key={n} value={n}>{n}/page</option>)}
+            </Select>
+            <Button onClick={()=>setEditing({})}>Add Preparation</Button>
+          </div>
+        }
+      >
+        <DataGrid
+          columns={columns}
+          rows={rows}
+          page={page}
+          size={size}
+          total={total}
+          onPage={setPage}
+          onSize={(n)=>{ setPage(1); setSize(n); }}
+          onEdit={(r)=>setEditing(r)}
+          onDelete={remove}
+          loading={loading}
+        />
       </Section>
 
-      {editing && (
-        <Card className="p-6">
-          <div className="mb-4 flex items-center justify-between">
-            <h4 className="text-lg font-semibold">{editing.id? "Edit Preparation" : "Add Preparation"}</h4>
-          </div>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div><label className="mb-1 block text-sm font-medium">Name</label>
-              <Input defaultValue={editing.name_en||""} onChange={e=>editing.name_en=e.target.value} />
-            </div>
-            <div><label className="mb-1 block text-sm font-medium">Form</label>
-              <Input defaultValue={editing.form_type||""} onChange={e=>editing.form_type=e.target.value} />
-            </div>
-            <div><label className="mb-1 block text-sm font-medium">Category</label>
-              <Input defaultValue={editing.category||""} onChange={e=>editing.category=e.target.value} />
-            </div>
-            <div className="md:col-span-2"><label className="mb-1 block text-sm font-medium">Notes</label>
-              <TextArea rows={4} defaultValue={editing.notes||""} onChange={e=>editing.notes=e.target.value} />
-            </div>
-          </div>
-          <div className="mt-5 flex justify-end">
-            <OutlineButton className="mr-2" onClick={()=>setEditing(null)}>Cancel</OutlineButton>
-            <Button onClick={()=>save(editing)}>Save</Button>
-          </div>
-        </Card>
-      )}
+      {/* Modal */}
+      <PreparationModal
+        open={!!editing}
+        initial={editing || null}
+        onClose={()=>setEditing(null)}
+        onSaved={()=>{ setEditing(null); setToast({ text:"Saved" }); load(); }}
+      />
 
       {toast && <Toast {...toast} onClose={()=>setToast(null)} />}
     </div>
