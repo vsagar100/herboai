@@ -101,7 +101,7 @@ def get_plant_detail(plant_id: int):
     #  a) direct: primary_plant_id = plant_id
     #  b) indirect: ingredients JSON contains this plant_id
     # Use parameterized pattern to search inside JSON string.
-    pattern = f'"plant_id": {plant_id}'
+    #pattern = f'"plant_id": {plant_id}'
     prep_rows = db.execute("""
         SELECT DISTINCT 
             p.id, p.name_en, p.name_hi, p.name_mr, p.classical_name,
@@ -114,11 +114,11 @@ def get_plant_detail(plant_id: int):
         FROM preparations p
         WHERE p.id IN (
             SELECT DISTINCT preparation_id 
-            FROM preparation_ingredients 
-            WHERE plant_id = ?
+            FROM preparation_ingredients pi
+            WHERE pi.plant_id = ?
         )
         ORDER BY p.id
-    """, (plant_id)).fetchall()
+    """, (plant_id,)).fetchall()
 
     preparations = []
     for r in prep_rows:

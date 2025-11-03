@@ -4,6 +4,9 @@ from flask_jwt_extended import jwt_required
 from werkzeug.utils import secure_filename
 from datetime import datetime
 import os, json, sqlite3
+from sqlite_vec import serialize_float32
+from sentence_transformers import SentenceTransformer
+model = SentenceTransformer("all-MiniLM-L6-v2")   # cache globally
 
 from db import get_db
 
@@ -199,6 +202,20 @@ def admin_delete_plant(plant_id: int):
     db.commit()
     return jsonify({"status": "deleted", "id": plant_id})
 
+# ------------------- Vector data update -------------------
+
+def embed_and_upsert_plant(plant_id: int, name_en: str, desc: str):
+    conn = get_db()
+    text = f"{name_en} {desc or ''}"
+    vec = model.encode(text).astype("float32").tolist()
+    conn.execute("""
+      INSERT INTO plant_vec(plant_id, name_en, embedding)
+      VALUES (?, ?, ?)
+      ON CONFLICT(plant_id)
+      DO UPDATE SET name_en=excluded.name_en, embedding=excluded.embedding
+    """, (plant_id, name_en, serialize_float32(vec)))
+    conn.commit()
+
 # ------------------- optional: image upload -------------------
 ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
@@ -248,3 +265,4 @@ def admin_upload_plant_image():
         print(e)
         current_app.logger.exception("Upload failed")
         return jsonify({"error": "upload failed"}), 500
+

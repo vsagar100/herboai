@@ -10,6 +10,7 @@ from api.admin_auth import admin_auth_bp
 from api.admin_plants import admin_plants_bp
 from api.admin_diseases import admin_diseases_bp
 from api.admin_preparations import admin_prep_bp
+from api.vec_health import bp as vec_bp 
 
 def create_app(config_object: type[Config] = Config) -> Flask:
     app = Flask(__name__)
@@ -30,6 +31,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
 
     # Blueprints
     app.register_blueprint(api_bp, url_prefix="/api")
+    app.register_blueprint(vec_bp, url_prefix="/api") 
     app.register_blueprint(files_bp, url_prefix="/files") 
     app.register_blueprint(admin_auth_bp, url_prefix="/api/auth")
     app.register_blueprint(admin_plants_bp, url_prefix="/api/admin")

@@ -1,4 +1,6 @@
 import sqlite3
+import sqlite_vec
+from sqlite_vec import load as load_sqlite_vec
 from flask import current_app, g, Flask
 
 PRAGMAS = [
@@ -7,9 +9,25 @@ PRAGMAS = [
     ("PRAGMA synchronous = NORMAL", ()),
 ]
 
-def get_db() -> sqlite3.Connection:
+def get_db():
+    db_path = current_app.config["DB_PATH"]
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.enable_load_extension(True)
+    try:
+        load_sqlite_vec(conn)  # ← registers vec0
+        print("✅ sqlite-vec (vec0) loaded")
+    except Exception as e:
+        print("⚠️ sqlite-vec not loaded:", e)
+    conn.enable_load_extension(False)
+    return conn
+
+def get_db1() -> sqlite3.Connection:
     if "db" not in g:
         db_path = current_app.config["DB_PATH"]
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)   # loads the extension
+        conn.enable_load_extension(False)
         if not db_path:
             print("DB_PATH is not configured!")
         else:
