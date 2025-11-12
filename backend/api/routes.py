@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, abort
 import sqlite3
 import json
+import time
 from utils.pagination import get_pagination, absolute_file_url
 from repositories.plants_repo import (
     list_plants, get_plant, get_plant_media, get_plant_synonyms, get_plants_for_disease
@@ -11,6 +12,7 @@ from repositories.preparations_repo import (
 )
 from repositories.search_repo import remedy_view_for_disease
 from services.chat import run_pipeline
+from api.nlu_optimized import detect_language
 from db import get_db
 
 bp = Blueprint("api", __name__)
@@ -238,17 +240,95 @@ def remedy():
 @bp.post("/query")
 def query():
     """
-    Smart AI-like query endpoint:
-    - Uses language detection, intent, entity extraction
-    - Retrieves from DB and composes deterministic replies (no hallucination)
-    - Uses conversations for session context
+    Smart multilingual query endpoint
+    
+    Request:
+      {
+        "text": "मुझे मधुमेह है। कौन सी जड़ी बूटी मदद करेगी?",
+        "session_id": "optional-session-id"
+      }
+    
+    Response:
+      {
+        "answer": "मधुमेह के लिए गुडमार (Gymnema sylvestre) सबसे प्रभावी है...",
+        "intent": "remedy_lookup",
+        "detected_language": "hi",
+        "structured": {
+          "disease": {...},
+          "plants": [{...}, ...],
+          "preparations": [{...}, ...]
+        },
+        "metadata": {
+          "session_id": "...",
+          "duration_ms": 12450,
+          "entities_found": {"plants": 3, "diseases": 1}
+        }
+      }
     """
-    data = (request.get_json(silent=True) or {})
-    user_text = data.get("text") or ""
-    session_id = request.headers.get("x-session-id") or data.get("session_id") or "default"
-
-    if not user_text.strip():
+    data = request.get_json(silent=True) or {}
+    user_text = (data.get("text") or "").strip()
+    session_id = request.headers.get("x-session-id") or data.get("session_id") or f"web-{int(time.time())}"
+    
+    if not user_text:
         return {"error": "Empty text"}, 400
-
-    result = run_pipeline(user_text=user_text.strip(), session_id=session_id)
-    return jsonify(result), 200
+    
+    try:
+        result = run_pipeline(user_text=user_text, session_id=session_id)
+        
+        # Transform to match frontend expectations from ChatInterface.jsx
+        # Frontend expects: {answer, intent, structured: {plants, disease, plant}, ...}
+        
+        response = {
+            "answer": result.get("answer", ""),
+            "intent": result.get("intent", "none"),
+            "detected_language": result.get("detected_language", "en"),
+            "structured": {},
+            "metadata": result.get("metadata", {})
+        }
+        
+        # Adapt structured data to frontend format
+        structured = result.get("structured", {})
+        
+        if "disease" in structured:
+            # Remedy lookup case
+            response["structured"] = {
+                "disease": structured["disease"],
+                "plants": structured.get("plants", [])[:5],  # Limit for frontend
+                "preparations": structured.get("preparations", [])[:3]
+            }
+        
+        elif "plant" in structured:
+            # Plant info case - frontend expects singular "plant"
+            response["structured"] = {
+                "plant": structured["plant"],
+                "plants": [structured["plant"]]  # Also as array for consistency
+            }
+        
+        else:
+            # Generic case
+            response["structured"] = {
+                "plants": structured.get("plants", [])[:5],
+                "diseases": structured.get("diseases", [])[:3]
+            }
+        
+        return jsonify(response), 200
+        
+    except Exception as e:
+        import traceback
+        print(f"[/api/query] Error: {e}")
+        print(traceback.format_exc())
+        
+        # Return error in appropriate language
+        lang = detect_language(user_text)
+        error_msgs = {
+            "hi": "क्षमा करें, एक त्रुटि हुई। कृपया पुनः प्रयास करें।",
+            "mr": "माफ करा, एक त्रुटी झाली. कृपया पुन्हा प्रयत्न करा.",
+            "en": "Sorry, an error occurred. Please try again."
+        }
+        
+        return {
+            "error": str(e),
+            "answer": error_msgs.get(lang, error_msgs["en"]),
+            "intent": "error",
+            "detected_language": lang
+        }, 500

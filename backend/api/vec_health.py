@@ -90,17 +90,21 @@ model = SentenceTransformer("all-MiniLM-L6-v2")
 
 @bp.post("/vec/reindex")
 def vec_reindex():
-    db = get_db(); db.row_factory = None
-    rows = db.execute("""
-        SELECT id, name_en, description
-        FROM diseases
-        WHERE updated_at > datetime('now', '-1 day')
-    """).fetchall()
-    for rid, name, desc in rows:
-        vec = model.encode(f"{name} {desc or ''}").astype("float32").tolist()
-        db.execute("""
-          INSERT OR REPLACE INTO disease_vec(disease_id, name_en, embedding)
-          VALUES (?, ?, ?)
-        """, (rid, name, serialize_float32(vec)))
-    db.commit()
-    return jsonify({"ok": True, "updated": len(rows)})
+    try:
+        db = get_db(); db.row_factory = None
+        rows = db.execute("""
+            SELECT id, name_en, description
+            FROM diseases
+            WHERE updated_at > datetime('now', '-1 day')
+        """).fetchall()
+        for rid, name, desc in rows:
+            vec = model.encode(f"{name} {desc or ''}").astype("float32").tolist()
+            db.execute("""
+                INSERT OR REPLACE INTO disease_vec(disease_id, name_en, embedding)
+                VALUES (?, ?, ?)
+            """, (rid, name, serialize_float32(vec)))
+        db.commit()
+        return jsonify({"ok": True, "updated": len(rows)})
+    except Exception as e:
+        print("Error in /vec/reindex:", e)
+        return jsonify({"ok": False, "error": str(e)}), 500

@@ -11,6 +11,7 @@ from api.admin_plants import admin_plants_bp
 from api.admin_diseases import admin_diseases_bp
 from api.admin_preparations import admin_prep_bp
 from api.vec_health import bp as vec_bp 
+from api.mt_health import bp as mt_bp
 
 def create_app(config_object: type[Config] = Config) -> Flask:
     app = Flask(__name__)
@@ -18,6 +19,11 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     jwt = JWTManager(app)
     app.config["JWT_SECRET_KEY"] = "supersecret-change-this"
     app.config["FILE_ROOT"] = app.config.get("MEDIA_ROOT")
+    app.config["OLLAMA_BASE_URL"] = app.config.get("OLLAMA_BASE_URL")
+    app.config["OLLAMA_MODEL"] = app.config.get("OLLAMA_MODEL")
+    # app.py (after app = Flask(__name__))
+    app.json.ensure_ascii = False
+
 
     CORS(app,
          resources={r"/api/*": {"origins": ["http://localhost:5173", "http://127.0.0.1:5173", "*"]}},
@@ -32,6 +38,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     # Blueprints
     app.register_blueprint(api_bp, url_prefix="/api")
     app.register_blueprint(vec_bp, url_prefix="/api") 
+    app.register_blueprint(mt_bp, url_prefix="/api")
     app.register_blueprint(files_bp, url_prefix="/files") 
     app.register_blueprint(admin_auth_bp, url_prefix="/api/auth")
     app.register_blueprint(admin_plants_bp, url_prefix="/api/admin")

@@ -8,8 +8,9 @@ import { useGlobalState } from "../store";
 import { translations } from "../i18n";
 
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "http://localhost:5000";
-// Dev via Vite proxy (no CORS): baseURL: "/api"
-const api = axios.create({ baseURL: "/api", withCredentials: false });
+// Prefer direct origin when provided to avoid dev proxy timeouts on long requests
+const BASE_URL = import.meta.env.VITE_API_ORIGIN ? `${API_ORIGIN}/api` : "/api";
+const api = axios.create({ baseURL: BASE_URL, withCredentials: false, timeout: 300000 });
 
 /** Utils */
 // save plain text

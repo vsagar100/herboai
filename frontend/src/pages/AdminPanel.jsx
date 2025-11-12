@@ -12,7 +12,7 @@ const API_ORIGIN =
   (import.meta?.env?.VITE_API_ORIGIN) ||
   "http://localhost:5000";
 const IMAGE_LOCAL_PATH = (import.meta?.env?.MEDIA_ROOT) ||
-  "static/plant_images";
+  "";
 
 async function api(path, { method = "GET", body, auth = true, headers = {} } = {}) {
   const token = localStorage.getItem("herboai_token");

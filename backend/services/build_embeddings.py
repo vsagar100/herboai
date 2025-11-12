@@ -1,5 +1,7 @@
 # scripts/build_embeddings.py
 import sqlite3, json
+import math
+from typing import List
 import sqlite_vec
 #from db import get_db
 from sqlite_vec import load as load_sqlite_vec
@@ -7,6 +9,10 @@ from sqlite_vec import serialize_float32
 from sentence_transformers import SentenceTransformer
 
 model = SentenceTransformer("all-MiniLM-L6-v2")   # CPU-friendly, 384-dim
+
+def _l2_normalize(v: List[float]) -> List[float]:
+    s = math.sqrt(sum(x*x for x in v)) or 1.0
+    return [x / s for x in v]
 
 def get_db():
     db_path = "../db/herboai.db" #current_app.config["DB_PATH"]
@@ -29,6 +35,7 @@ def _upsert(sql, rows, text_fn, id_fn, name_fn):
                 if not txt: 
                         continue
                 vec = model.encode(txt).astype("float32").tolist()
+                vec = _l2_normalize(vec) # normalize for better distance comparisons
                 db.execute(sql, (id_fn(r), name_fn(r), serialize_float32(vec)))
         db.commit()
     except Exception as e:
