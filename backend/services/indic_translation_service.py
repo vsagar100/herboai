@@ -38,15 +38,14 @@ def _lang_tag(lang: str) -> str:
 
 class IndicTranslationService:
     """
-    Thin wrapper that holds three IndicTrans2 translators (one per direction)
-    and exposes convenient helpers.
+    Thin wrapper that holds the publicly available IndicTrans2 translators
+    (en→indic and indic→en) and exposes convenient helpers.
     """
 
     def __init__(self):
         self.models = {
             "en-indic": IndicTranslator("en-indic"),
             "indic-en": IndicTranslator("indic-en"),
-           # "indic-indic": IndicTranslator("indic-indic"),
         }
 
     # ------------------------------------------------------------------
@@ -56,6 +55,9 @@ class IndicTranslationService:
     def translate_text(self, text: str, src_lang: str, tgt_lang: str) -> str:
         if not text or src_lang == tgt_lang:
             return text
+        if src_lang != "en" and tgt_lang != "en":
+            interim = self.translate_text(text, src_lang, "en")
+            return self.translate_text(interim, "en", tgt_lang)
         model, src_tag, tgt_tag = self._select_route(src_lang, tgt_lang)
         return self._run_translation(model, text, src_tag, tgt_tag)
 
@@ -64,6 +66,9 @@ class IndicTranslationService:
     ) -> List[str]:
         if src_lang == tgt_lang:
             return list(texts)
+        if src_lang != "en" and tgt_lang != "en":
+            interim = self.translate_batch(texts, src_lang, "en")
+            return self.translate_batch(interim, "en", tgt_lang)
         model, src_tag, tgt_tag = self._select_route(src_lang, tgt_lang)
         return self._run_translation(model, list(texts), src_tag, tgt_tag)
 
@@ -83,13 +88,32 @@ class IndicTranslationService:
         if src_lang == tgt_lang:
             return payload
 
+        def _translate_str(text: str) -> str:
+            stripped = text.strip()
+            if not stripped:
+                return text
+            return self.translate_text(stripped, src_lang, tgt_lang)
+
         def _walk(value: Any) -> Any:
             if isinstance(value, str):
-                stripped = value.strip()
-                if not stripped:
-                    return value
-                return self.translate_text(stripped, src_lang, tgt_lang)
+                return _translate_str(value)
             if isinstance(value, list):
+                # Translate homogeneous string lists in a batch to avoid
+                # repeated model calls and reduce latency.
+                if all(isinstance(v, str) or v is None for v in value):
+                    strings = [v for v in value if isinstance(v, str) and v.strip()]
+                    translated = iter(
+                        self.translate_batch(strings, src_lang, tgt_lang)
+                        if strings
+                        else []
+                    )
+                    out: List[Any] = []
+                    for v in value:
+                        if isinstance(v, str) and v.strip():
+                            out.append(next(translated))
+                        else:
+                            out.append(v)
+                    return out
                 return [_walk(v) for v in value]
             if isinstance(value, dict):
                 return {k: _walk(v) for k, v in value.items()}
@@ -119,7 +143,7 @@ class IndicTranslationService:
             return self.models["en-indic"], src_tag, tgt_tag
         if tgt == "en" and src != "en":
             return self.models["indic-en"], src_tag, tgt_tag
-        return self.models["indic-indic"], src_tag, tgt_tag
+        raise ValueError("Direct Indic-to-Indic translation requires via-English routing.")
 
     # ------------------------------------------------------------------
     # Internal helpers

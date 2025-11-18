@@ -9,10 +9,15 @@ import re
 from typing import Dict, List, Tuple
 from db import get_db
 
+try:
+    from services.indic_translation_service import IndicTranslationService
+except Exception:
+    IndicTranslationService = None  # type: ignore
+
 # Language detection patterns
 DEVANAGARI_RE = re.compile(r"[\u0900-\u097F]")
 
-# Marathi-specific markers
+# Lightweight markers as a fallback if shared detector is unavailable
 MR_MARKERS = {
     "बद्दल", "माहिती", "तुळस", "गुळवेल", "औषधी", "काढा",
     "आलं", "हिरडा", "आवळा", "दुखी", "साठी", "मला", "आहे"
@@ -54,21 +59,22 @@ def detect_language(text: str) -> str:
     """
     if not text:
         return "en"
-    
+
+    # Prefer the shared detector (no model load; pure heuristics)
+    if IndicTranslationService:
+        try:
+            return IndicTranslationService.detect_lang(text)
+        except Exception:
+            pass
+
     t = text.lower()
-    
-    # Check for Devanagari script
     if not DEVANAGARI_RE.search(t):
         return "en"
-    
-    # Count Marathi vs Hindi markers
+
     mr_count = sum(1 for marker in MR_MARKERS if marker in t)
     hi_count = sum(1 for marker in HI_MARKERS if marker in t)
-    
-    # Marathi if more MR markers or specific words
     if mr_count > hi_count or any(word in t for word in ["गुळवेल", "तुळस", "आवळा", "हिरडा"]):
         return "mr"
-    
     return "hi"
 
 def classify_intent(text: str) -> str:

@@ -7,6 +7,4 @@ class Config:
     DEFAULT_PAGE_SIZE = int(os.environ.get("HERBOAI_PAGE_SIZE", "20"))
     MAX_PAGE_SIZE = int(os.environ.get("HERBOAI_MAX_PAGE_SIZE", "100"))
     MEDIA_ROOT = os.environ.get("HERBOAI_MEDIA_ROOT", os.path.abspath("static/plant_images"))
-    OLLAMA_BASE_URL="http://localhost:11434/api/chat"
-    OLLAMA_MODEL="gpt-oss:20b"
 

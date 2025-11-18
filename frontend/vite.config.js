@@ -9,14 +9,16 @@ export default defineConfig({
       '/api': {
         target: 'http://127.0.0.1:5000',
         changeOrigin: true,
-        timeout: 120000,
-        proxyTimeout: 120000,
+        // Keep proxy timeouts on par with frontend axios (300s) to avoid
+        // websocket/HTTP stream cuts during long translations.
+        timeout: 300000,
+        proxyTimeout: 300000,
       },
       '/files': {
         target: 'http://127.0.0.1:5000',
         changeOrigin: true,
-        timeout: 120000,
-        proxyTimeout: 120000,
+        timeout: 300000,
+        proxyTimeout: 300000,
       }
     }
   }

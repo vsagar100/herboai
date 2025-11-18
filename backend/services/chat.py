@@ -9,7 +9,14 @@ from sqlite_vec import serialize_float32
 
 from db import get_db
 from api.nlu_optimized import detect_language, classify_intent, extract_entities
+from services.async_translator import get_async_translator
 from services.indic_translation_service import get_indic_translation_service
+from services.response_builder import (
+    build_generic_answer,
+    build_no_data_answer,
+    build_plant_answer,
+    build_remedy_answer,
+)
 from api.context import get_last_context, persist_turn
 from semantic import top_plants_for_disease, top_preparations_for_disease, ingredients_for_preparation
 
@@ -52,6 +59,34 @@ def _embed_384(text: str) -> bytes:
     v = _EMB_MODEL.encode(text).astype("float32").tolist()
     v = _l2_normalize(v)
     return serialize_float32(v)
+
+
+def _prioritize_name_match(items: List[Dict], query: str, keys: List[str]) -> List[Dict]:
+    """Bring exact/partial name matches to the front of the list."""
+    if not items or not query:
+        return items
+
+    q = query.lower().strip()
+
+    def score(item: Dict) -> int:
+        names = []
+        for key in keys:
+            if not isinstance(item, dict):
+                continue
+            value = item.get(key)
+            if isinstance(value, str):
+                names.append(value.lower())
+            elif isinstance(value, list):
+                names.extend(v.lower() for v in value if isinstance(v, str))
+        if not names:
+            return 3
+        if any(q == name for name in names):
+            return 0
+        if any(name.startswith(q) or q in name for name in names):
+            return 1
+        return 2
+
+    return sorted(items, key=score)
 
 # Optional preload to avoid first-request download latency
 if os.getenv("SENTENCE_PRELOAD", "0") == "1":
@@ -297,150 +332,6 @@ def build_remedy_context(disease_row: Dict) -> str:
     
     return "\n".join(parts)
 
-# ============================================================================
-# MULTILINGUAL LLM RESPONSE GENERATION
-# ============================================================================
-
-def generate_multilingual_response(
-    user_query: str,
-    detected_lang: str,
-    intent: str,
-    knowledge_context: str,
-    conversation_history: str = ""
-) -> str:
-    """
-    Single Ollama call that:
-    1. Takes original query (any language)
-    2. Gets English knowledge context
-    3. Responds in user's language
-    
-    This eliminates the translate->generate->translate pipeline
-    """
-    import requests
-    import os
-    
-    lang_names = {"en": "English", "hi": "Hindi", "mr": "Marathi"}
-    response_lang = lang_names.get(detected_lang, "English")
-    
-    system_prompt = f"""You are HerboAI, an expert Ayurvedic consultant specializing in medicinal herbs and traditional medicine.
-
-Your role:
-1. Answer questions about medicinal plants, diseases, and herbal preparations
-2. Provide evidence-based information from the KNOWLEDGE CONTEXT provided below
-3. Give practical, safe, and specific recommendations
-4. CRITICAL: Respond ENTIRELY in {response_lang} language
-5. Be concise but complete (3-5 sentences for simple queries, more for complex ones)
-6. Always include dosage, timing, and preparation details when available
-7. Mention contraindications and precautions when relevant
-
-IMPORTANT RULES:
-- Use ONLY information from the knowledge context - never invent plant names or properties
-- If information is not in the context, politely say you don't have that information
-- Never diagnose serious conditions - recommend consulting healthcare professionals
-- For emergency symptoms, always advise immediate medical attention
-- Respect the cultural and traditional knowledge while being scientifically accurate
-
-Response format:
-- Start with direct answer to the question
-- Include plant names: Common name (Botanical name)
-- Mention preparation method if applicable  
-- Add brief safety disclaimer at the end
-- Use natural, conversational {response_lang}
-
-Remember: Your entire response must be in {response_lang}, including plant names in the local language when possible."""
-
-    user_prompt = f"""User Query: {user_query}
-
-Intent: {intent}
-
-{knowledge_context}
-
-{conversation_history}
-
-Based on the knowledge context above, provide a helpful answer in {response_lang}. Be specific, practical, and include preparation/dosage details when available."""
-
-    try:
-        # Resolve Ollama chat endpoint robustly across env var variants
-        host = os.getenv("OLLAMA_HOST")
-        url_generate = os.getenv("OLLAMA_URL")
-        base_url = os.getenv("OLLAMA_BASE_URL") or os.getenv("OLLAMA_CHAT_URL")
-        if not base_url:
-            if host:
-                base_url = f"{host.rstrip('/')}/api/chat"
-            elif url_generate:
-                base_url = (
-                    url_generate.replace("/api/generate", "/api/chat")
-                    if "/api/generate" in url_generate
-                    else f"{url_generate.rstrip('/')}/chat"
-                )
-            else:
-                base_url = "http://localhost:11434/api/chat"
-
-        model = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
-        timeout = int(os.getenv("OLLAMA_HTTP_TIMEOUT", "300"))
-        
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            "stream": False,
-            "options": {
-                "temperature": 0.3,  # Lower for consistency
-                "num_ctx": 6144,     # Balanced context size
-                "top_p": 0.9,
-                "top_k": 40
-            }
-        }
-        
-        print(f"[Ollama] Calling {model} for {response_lang} response...")
-        start = time.time()
-        
-        payload["keep_alive"] = "2m"
-        response = requests.post(base_url, json=payload, timeout=timeout)
-        response.raise_for_status()
-        
-        elapsed = time.time() - start
-        print(f"[Ollama] Response received in {elapsed:.2f}s")
-        
-        data = response.json()
-        content = (data.get("message") or {}).get("content", "")
-        
-        if isinstance(data, dict):
-            if "message" in data and isinstance(data["message"], dict):
-                content = data["message"].get("content", "") or ""
-            elif "choices" in data and data["choices"]:
-                content = data["choices"][0].get("message", {}).get("content", "") or ""
-
-        if not content:
-            raise Exception(f"Empty response from Ollama (model={model})")
-
-        # Debug-print a small preview of the generated answer
-        preview = content.strip()[:200]
-        print(f"[Ollama] Answer preview: {preview}...")
-
-        return content.strip()
-        
-    except Exception as e:
-        print(f"[Ollama Error] {e}")
-       # Log full cause for server console & attach small marker back
-        import traceback
-        print(f"[Ollama Error] {e}\n{traceback.format_exc()}")
-        
-        # Language-appropriate fallback
-        fallbacks = {
-            "hi": "मुझे खेद है, मैं अभी आपकी मदद नहीं कर सकता। कृपया बाद में पुनः प्रयास करें। यदि यह समस्या बनी रहती है, तो कृपया अपने स्वास्थ्य सेवा प्रदाता से परामर्श करें।",
-            "mr": "मला माफ करा, मी आत्ता तुमची मदत करू शकत नाही. कृपया नंतर पुन्हा प्रयत्न करा. जर ही समस्या कायम राहिली तर कृपया आपल्या आरोग्य सेवा प्रदात्याशी सल्लामसलत करा.",
-            "en": "I apologize, but I'm unable to provide an answer at this moment. Please try again later. If the issue persists, please consult with your healthcare provider."
-        }
-        
-        marker = {
-           "hi": "\n\n[नोट: LLM उपलब्ध नहीं / विलंबित]",
-           "mr": "\n\n[टीप: LLM उपलब्ध नाही / उशीर]",
-            "en": "\n\n[Note: LLM unavailable / delayed]"
-        }
-        return (fallbacks.get(detected_lang, fallbacks["en"]) + marker.get(detected_lang, marker["en"]))
 
 # ============================================================================
 # MAIN PIPELINE
@@ -460,20 +351,37 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
     # Step 1: Language detection (no translation yet)
     lang = detect_language(user_text)
     print(f"[Pipeline] Language: {lang}")
-    translator = get_indic_translation_service()
+    translator = None
+    async_tx = get_async_translator()
+
     # Step 2: Translate ONLY for intent classification (internal routing)
-    # This is quick since it's just for classification, not the full response
+    # Keep best-effort: if the heavy model is still loading, skip to avoid blocking.
+    text_for_intent = user_text
     if lang != "en":
-        text_for_intent = translator.to_en(user_text, src_lang=lang)
-        print(f"[Translate] Query -> EN: {text_for_intent}")
-    else:
-        text_for_intent = user_text
+        if async_tx.is_ready():
+            try:
+                translator = get_indic_translation_service()
+                text_for_intent = translator.to_en(user_text, src_lang=lang)
+                print(f"[Translate] Query -> EN (intent): {text_for_intent}")
+            except Exception as exc:
+                print(f"[Translate] Skipping intent translation: {exc}")
+        else:
+            async_tx.warmup()
+            print("[Translate] Translator warming up; using original text for intent")
     intent = classify_intent(text_for_intent)
-    print(f"[Pipeline] Intent: {intent}")
+    print(f"[Pipeline] Intent: {intent} (text_for_intent={text_for_intent})")
     
     # Step 3: Entity extraction (works on original multilingual query)
     plants, diseases = extract_entities(user_text, text_for_intent, prefer_en=(lang != "en"))
     print(f"[Pipeline] Found {len(plants)} plants, {len(diseases)} diseases (FTS)")
+
+    name_hint = text_for_intent or user_text
+    plants = _prioritize_name_match(
+        plants, name_hint, ["common_name_en", "botanical_name", "synonym", "name"]
+    )
+    diseases = _prioritize_name_match(
+        diseases, name_hint, ["name_en", "name", "synonym"]
+    )
     
     # Step 4: Vector fallback if FTS didn't find anything
     if not diseases:
@@ -515,82 +423,102 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
         plants_full = last["entities"]["plants"][:2]
     if intent == "none" and last:
         intent = last.get("intent", "none")
+
+    # Heuristic: if the query text implies "for <condition>" and we found diseases,
+    # prefer remedy_lookup even if the classifier leaned plant_info.
+    text_lower = (text_for_intent or user_text).lower()
+    if intent != "remedy_lookup" and diseases_full:
+        if any(needle in text_lower for needle in [" साठी", "साठी", "के लिए", "for "]):
+            intent = "remedy_lookup"
     
     print(f"[Pipeline] After hydration: {len(plants_full)} plants, {len(diseases_full)} diseases")
     
-    # Step 7: Build knowledge context & generate response
-    answer_text = ""
-    structured = {}
+    # Step 7: Deterministic response generation (no external LLM)
     
+    tructured: Dict[str, Any] = {}
+    answer_text_en = ""
+
     if intent in ("remedy_lookup", "preparation_info") and diseases_full:
-        # Remedy lookup - build detailed context
         disease_row = diseases_full[0]
-        knowledge_ctx = build_remedy_context(disease_row)
-        
-        print(f"[Pipeline] Knowledge context: {len(knowledge_ctx)} chars")
-        
-        # Generate multilingual response
-        conv_history = ""
-        if last:
-            conv_history = f"Previous query: {last.get('user_text', '')}"
-        
-        answer_text = generate_multilingual_response(
-            user_text, lang, intent, knowledge_ctx, conv_history
-        )
-        
-        # Also prepare structured data for frontend
         structured = {
             "disease": disease_row,
             "plants": top_plants_for_disease(disease_row["id"], k=5),
-            "preparations": top_preparations_for_disease(disease_row["id"], k=3)
+            "preparations": top_preparations_for_disease(disease_row["id"], k=3),
         }
-    
+        answer_text_en = build_remedy_answer(
+            disease_row,
+            structured["plants"],
+            structured["preparations"],
+        )
+
     elif intent == "plant_info" and plants_full:
-        # Plant info - simpler context
         plant = plants_full[0]
-        knowledge_ctx = build_knowledge_context([plant], [], lang)
-        
-        answer_text = generate_multilingual_response(
-            user_text, lang, intent, knowledge_ctx
-        )
-        
-        structured = {"plant": plant}
-    
+        structured = {
+            "plant": plant,
+            "plants": [plant],
+        }
+        answer_text_en = build_plant_answer(plant)
+
     elif plants_full or diseases_full:
-        # Generic query with entities - provide general context
-        knowledge_ctx = build_knowledge_context(plants_full, diseases_full, lang)
-        
-        answer_text = generate_multilingual_response(
-            user_text, lang, intent, knowledge_ctx
-        )
-        
         structured = {
             "plants": plants_full,
-            "diseases": diseases_full
+            "diseases": diseases_full,
         }
-    
+        answer_text_en = build_generic_answer(plants_full, diseases_full)
+
     else:
-        # No entities found - use fallback
-        fallbacks = {
-            "hi": "मुझे खेद है, मुझे इस विषय पर कोई जानकारी नहीं मिली। कृपया अधिक विशिष्ट प्रश्न पूछें या किसी पौधे या रोग का नाम बताएं।",
-            "mr": "मला माफ करा, मला या विषयावर माहिती सापडली नाही. कृपया अधिक विशिष्ट प्रश्न विचारा किंवा एखाद्या वनस्पतीचे किंवा रोगाचे नाव सांगा.",
-            "en": "I'm sorry, I couldn't find information on this topic. Please ask a more specific question or mention a plant or condition name."
-        }
-        answer_text = fallbacks.get(lang, fallbacks["en"])
-    
+        structured = {}
+        answer_text_en = build_no_data_answer(user_text)
+
+    print(f"[Pipeline] Answer (en): {answer_text_en}")
+
+    answer_text = answer_text_en
+    structured_local = structured
+    if lang != "en":
+        translated = None
+
+        # First, try async with a short timeout
+        try:
+            translated = async_tx.translate_async(
+                answer_text_en, lang, timeout=3000, warm_timeout=8
+            )
+        except Exception as exc:  # pragma: no cover - runtime failure guard
+            print(f"[Translation] Async worker error: {exc}")
+
+        # If async timed out/failed, fall back to sync translate (model should be warm by now)
+        if not translated:
+            try:
+                translator = translator or get_indic_translation_service()
+                translated = translator.translate_text(answer_text_en, "en", lang)
+                print("[Translation] Used sync translator after async timeout")
+            except Exception as exc:
+                print(f"[Translation] Sync fallback failed: {exc}")
+
+        if translated:
+            answer_text = translated
+            print(f"[Translation] Answer ({lang}): {answer_text}")
+            try:
+                translator = translator or get_indic_translation_service()
+                if structured and os.getenv("TRANSLATE_STRUCTURED_JSON", "0") == "1":
+                    print("[Translation] Translating structured payload...")
+                    structured_local = translator.translate_values(structured, "en", lang)
+                    print("[Translation] Structured payload translated")
+                else:
+                    structured_local = structured
+                    print("[Translation] Skipped structured payload translation")
+            except Exception as exc:
+                print(f"[Translation] Structured fallback: {exc}")
+                structured_local = structured
+        else:
+            print("[Translation] Falling back to English response (timeout or error)")
+    else:
+        print("[Translation] Skipped; language is en")
+
     # Step 8: Persist conversation
     entities_dump = {
         "plants": plants_full,
         "diseases": diseases_full
     }
-    
-    json_data = {
-        "answer": answer_text,
-        "structured": structured,
-    }
-    # Do NOT re-translate the answer: generate_multilingual_response already
-    # produced it in the user's language. This avoids a second heavy Ollama call
-    # that can cause UI timeouts. We keep keys/structure in English.
 
     duration_ms = int((time.time() - t0) * 1000)
     persist_turn(
@@ -600,16 +528,16 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
         intent,
         entities_dump,
         answer_text,
-        structured,
+        structured_local,
         duration_ms
     )
     print(f"[Pipeline] Complete in {duration_ms}ms")
 
     return {
-        "answer": json_data.get("answer", ""),
+        "answer": answer_text,
         "intent": intent,
         "detected_language": lang,
-        "structured": json_data.get("structured", {}),
+        "structured": structured_local,
         "metadata": {
             "session_id": session_id,
             "duration_ms": duration_ms,

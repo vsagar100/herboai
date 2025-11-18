@@ -11,10 +11,11 @@ class IndicTranslator:
         - "indic-en": Indian languages to English
         - "indic-indic": Indian to Indian languages
         """
+        # Use the lighter 200M checkpoints to avoid CPU timeouts/OOM on 1B models.
         model_map = {
-            "en-indic": "ai4bharat/indictrans2-en-indic-1B",
-            "indic-en": "ai4bharat/indictrans2-indic-en-1B",
-            "indic-indic": "ai4bharat/indictrans2-indic-indic-1B"
+            "en-indic": "ai4bharat/indictrans2-en-indic-dist-200M",
+            "indic-en": "ai4bharat/indictrans2-indic-en-dist-200M",
+            "indic-indic": "ai4bharat/indictrans2-indic-indic-dist-320M",
         }
         
         model_name = model_map[direction]
