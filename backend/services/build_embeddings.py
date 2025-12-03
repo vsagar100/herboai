@@ -15,7 +15,7 @@ def _l2_normalize(v: List[float]) -> List[float]:
     return [x / s for x in v]
 
 def get_db():
-    db_path = "../db/herboai.db" #current_app.config["DB_PATH"]
+    db_path = "../db/new_herboai.db" #current_app.config["DB_PATH"]
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.enable_load_extension(True)

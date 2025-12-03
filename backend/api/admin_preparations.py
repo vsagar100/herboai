@@ -125,7 +125,7 @@ def create_preparation():
         cur = conn.cursor()
         cur.execute("""
             INSERT INTO preparations
-            (name_en, name_hi, name_mr, classical_name, ayush_system_id, form_type, category,
+            (name_en, name_hi, name_mr, classical_name, ayush_system, form_type, category,
              preparation_steps, equipment_needed, duration, yield, storage, shelf_life,
              dosage_json, timing, anupana, notes)
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -134,7 +134,7 @@ def create_preparation():
             payload.get("name_hi"),
             payload.get("name_mr"),
             payload.get("classical_name"),
-            int(payload.get("ayush_system_id", 1)),
+            payload.get("ayush_system"),
             payload.get("form_type"),
             payload.get("category"),
             payload.get("preparation_steps"),
@@ -166,7 +166,7 @@ def update_preparation(prep_id):
 
         # Only normalize keys that may exist; allow partial updates
         fields = [
-            "name_en","name_hi","name_mr","classical_name","ayush_system_id",
+            "name_en","name_hi","name_mr","classical_name","ayush_system",
             "form_type","category","preparation_steps","equipment_needed",
             "duration","yield","storage","shelf_life","dosage_json",
             "timing","anupana","notes"
@@ -188,8 +188,6 @@ def update_preparation(prep_id):
         sets = []
         params = []
         for k, v in to_update.items():
-            if k == "ayush_system_id" and v is not None:
-                v = int(v)
             sets.append(f"{k}=?")
             params.append(v)
         params.append(prep_id)

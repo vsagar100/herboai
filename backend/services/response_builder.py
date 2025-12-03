@@ -180,3 +180,99 @@ def build_no_data_answer(user_text: str) -> str:
         "I couldn't link this query to any plant or condition in the knowledge base. "
         "Please try mentioning a plant name, disease, or preparation so I can help."
     )
+
+def build_plant_knowledge_snippet(plant: Dict) -> str:
+    """
+    Compact, embedding-friendly plant description that matches the tone
+    of build_plant_answer but without disclaimers or chat framing.
+
+    Used for:
+    - plant_embeddings ETL
+    - RAG context building
+    """
+    name = plant.get("common_name_en") or plant.get("common_name") or "This plant"
+    botanical = plant.get("botanical_name") or ""
+    header = f"{name} ({botanical})" if botanical else name
+
+    parts = [header]
+
+    if plant.get("description"):
+        parts.append(plant["description"])
+
+    if plant.get("parts_used"):
+        parts.append(f"Parts used: {_format_list(plant['parts_used'])}.")
+
+    if plant.get("therapeutic_actions"):
+        parts.append(
+            f"Key actions: {_format_list(plant['therapeutic_actions'])}."
+        )
+
+    rasa = _format_list(plant.get("rasa") or [])
+    guna = _format_list(plant.get("guna") or [])
+    virya = plant.get("virya")
+    vipaka = plant.get("vipaka")
+    dosha = _format_list(plant.get("dosha_effect") or [])
+
+    energetics = []
+    if rasa:
+        energetics.append(f"Rasa (taste): {rasa}")
+    if guna:
+        energetics.append(f"Guna (qualities): {guna}")
+    if virya:
+        energetics.append(f"Virya (potency): {virya}")
+    if vipaka:
+        energetics.append(f"Vipaka (post-digestive effect): {vipaka}")
+    if dosha:
+        energetics.append(f"Dosha impact: {dosha}")
+    if energetics:
+        parts.append("; ".join(energetics) + ".")
+
+    # No disclaimer here – this is pure knowledge text for embeddings / context.
+    return " ".join(p.strip() for p in parts if p and str(p).strip())
+
+
+def build_disease_knowledge_snippet(disease: Dict) -> str:
+    """
+    Compact, embedding-friendly disease description that aligns with
+    build_remedy_answer's tone but focused only on the condition itself.
+    """
+    name = disease.get("name_en") or "This condition"
+    parts = [f"{name}:"]
+
+    if disease.get("ayurvedic_name"):
+        parts.append(f"Ayurvedic name: {disease['ayurvedic_name']}.")
+
+    if disease.get("description"):
+        parts.append(disease["description"])
+
+    if disease.get("symptoms"):
+        parts.append(
+            f"Typical symptoms: {_format_list(disease['symptoms'])}."
+        )
+    if disease.get("causes"):
+        parts.append(
+            f"Root causes and risk factors: {_format_list(disease['causes'])}."
+        )
+
+    dosha = _format_list(disease.get("dosha_involvement") or [])
+    dhatu = _format_list(disease.get("dhatu_involvement") or [])
+    severity = disease.get("severity_level")
+
+    if dosha:
+        parts.append(f"Dosha involvement: {dosha}.")
+    if dhatu:
+        parts.append(f"Dhatu involvement: {dhatu}.")
+    if severity:
+        parts.append(f"Severity level: {severity}.")
+
+    if disease.get("prevention_tips"):
+        parts.append(
+            f"Prevention and lifestyle tips: {_format_list(disease['prevention_tips'])}."
+        )
+    if disease.get("dietary_recommendations"):
+        parts.append(
+            f"Dietary recommendations: {_format_list(disease['dietary_recommendations'])}."
+        )
+
+    # Again, no generic disclaimer – context only.
+    return " ".join(p.strip() for p in parts if p and str(p).strip())

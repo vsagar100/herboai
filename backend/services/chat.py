@@ -16,6 +16,8 @@ from services.response_builder import (
     build_no_data_answer,
     build_plant_answer,
     build_remedy_answer,
+    build_plant_knowledge_snippet,
+    build_disease_knowledge_snippet,
 )
 from api.context import get_last_context, persist_turn
 from semantic import top_plants_for_disease, top_preparations_for_disease, ingredients_for_preparation
@@ -28,6 +30,100 @@ _SENTENCE_MODEL_CACHE = os.getenv("SENTENCE_MODEL_CACHE")  # e.g., /data/models/
 # ============================================================================
 # HELPERS
 # ============================================================================
+
+HERBOAI_SYSTEM_PROMPT = """
+    You are HerboAI, an AI vaidya (AYUSH-based herbal assistant) that runs locally.
+
+    GOAL:
+    - Understand the user’s intention: 
+    * plant information (identity, properties, uses),
+    * disease/condition information,
+    * Ayurvedic/herbal remedy advice,
+    * or general wellness questions.
+    - Use ONLY the factual herbal and disease knowledge given in the CONTEXT section.
+    - Answer in a warm, conversational tone like a helpful Ayurvedic doctor, not like a FAQ page.
+    - Always respond in the SAME LANGUAGE as the user’s query (Marathi, Hindi, or English).
+
+    CONTEXT RULES:
+    - The CONTEXT block contains trusted summaries of plants, diseases and preparations from validated AYUSH sources.
+    - Never invent new plants, diseases, or preparations that are not present in the context.
+    - If something is not present in the context, say that it is not available in the current HerboAI knowledge base.
+
+    SAFETY & MEDICAL DISCLAIMER:
+    - You are NOT a replacement for a doctor.
+    - Do not give emergency or critical-care instructions.
+    - For serious, worsening, or unclear symptoms, ALWAYS suggest consulting a qualified doctor or vaidyas in person.
+
+    STYLE:
+    - Start by briefly acknowledging the user’s need (e.g., “तुम्हाला मधुमेहासाठी आयुर्वेदिक उपाय जाणून घ्यायचे आहेत…”).
+    - Use simple language appropriate for the user’s language (Marathi/Hindi/English).
+    - When useful, organize the answer into small sections with headings, like:
+    * वनस्पती माहिती / Plant Information
+    * आयुर्वेदिक उपयोग / Ayurvedic Uses
+    * तयारी आणि सेवन पद्धत / Preparation & Dosage
+    * खबरदारी / Precautions
+    - Keep dosage suggestions gentle and within traditional dietary / household ranges. 
+    Never prescribe aggressive, high-dose, or toxic regimens.
+
+    INTENT HANDLING:
+    - If user mainly asks “what is this plant / गुणधर्म / uses”, focus on:
+    * identity, rasa–guna–virya–vipaka, dosha effects, therapeutic actions, general household preparations.
+    - If user mainly asks about a disease/condition, focus on:
+    * short disease explanation + relevant lifestyle/diet + supporting herbs from context.
+    - If user asks “उपाय/उपचार/remedy for X”, focus on:
+    * a few key herbs from context, simple preparation steps, and safety notes.
+    - If user query is vague/general, provide a balanced overview of any relevant plants/diseases from context.
+    """.strip()
+
+def build_herboai_context(
+    plants: list,
+    diseases: list,
+    preparations: list,
+) -> str:
+    """
+    Build a single context string passed to the LLM.
+    `plants`, `diseases`, `preparations` are lists of dicts coming
+    from your DB/retrieval layer.
+
+    This is what gets embedded (via ETL) AND what gets fed back
+    to the model at query time.
+    """
+    sections = []
+
+    if plants:
+        plant_lines = ["=== MEDICINAL PLANTS ==="]
+        for p in plants:
+            snippet = build_plant_knowledge_snippet(p)
+            if snippet:
+                plant_lines.append(snippet)
+        sections.append("\n\n".join(plant_lines))
+
+    if diseases:
+        disease_lines = ["=== MEDICAL CONDITIONS ==="]
+        for d in diseases:
+            snippet = build_disease_knowledge_snippet(d)
+            if snippet:
+                disease_lines.append(snippet)
+        sections.append("\n\n".join(disease_lines))
+
+    if preparations:
+        # You can refine this later into a dedicated builder.
+        prep_lines = ["=== HERBAL PREPARATIONS ==="]
+        for prep in preparations:
+            name = prep.get("name") or prep.get("preparation_name") or "Unnamed preparation"
+            form = prep.get("form") or prep.get("dosage_form")
+            desc = prep.get("description") or ""
+            line = name
+            if form:
+                line += f" ({form})"
+            if desc:
+                line += f": {desc}"
+            prep_lines.append(line)
+        sections.append("\n\n".join(prep_lines))
+
+    return "\n\n".join(s for s in sections if s.strip())
+
+
 
 def _as_list(x):
     """Parse JSON array or return as-is"""
@@ -343,7 +439,7 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
     1. Detect language & intent (fast)
     2. Extract entities with FTS + vector fallback
     3. Build knowledge context
-    4. Single LLM call for multilingual response
+    4. Deterministic answer + translation (no external LLM yet)
     5. Return structured result
     """
     t0 = time.time()
@@ -397,7 +493,7 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
         plants = vec_plants
     
     # Step 5: Hydrate entities (fetch full records if we only have IDs)
-    plants_full = []
+    plants_full: List[Dict[str, Any]] = []
     for p in plants[:3]:  # Limit to top 3
         if "botanical_name" in p and p.get("botanical_name"):
             plants_full.append(p)
@@ -406,7 +502,7 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
             if full:
                 plants_full.append(full)
     
-    diseases_full = []
+    diseases_full: List[Dict[str, Any]] = []
     for d in diseases[:3]:
         if "name_en" in d and d.get("name_en"):
             diseases_full.append(d)
@@ -433,9 +529,9 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
     
     print(f"[Pipeline] After hydration: {len(plants_full)} plants, {len(diseases_full)} diseases")
     
-    # Step 7: Deterministic response generation (no external LLM)
+    # Step 7: Deterministic, chat-style response generation (no external LLM yet)
     
-    tructured: Dict[str, Any] = {}
+    structured: Dict[str, Any] = {}
     answer_text_en = ""
 
     if intent in ("remedy_lookup", "preparation_info") and diseases_full:
@@ -470,6 +566,20 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
         structured = {}
         answer_text_en = build_no_data_answer(user_text)
 
+    # Light conversational wrapper so it feels like an AI guide
+    if answer_text_en:
+        if intent == "plant_info":
+            prefix = "Here is an Ayurvedic overview based on your question:\n\n"
+        elif intent in ("remedy_lookup", "preparation_info"):
+            prefix = (
+                "Based on classical Ayurvedic references in the knowledge base, "
+                "here is a concise guideline:\n\n"
+            )
+        else:
+            prefix = ""
+        if prefix:
+            answer_text_en = prefix + answer_text_en
+
     print(f"[Pipeline] Answer (en): {answer_text_en}")
 
     answer_text = answer_text_en
@@ -500,7 +610,7 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
             try:
                 translator = translator or get_indic_translation_service()
                 if structured and os.getenv("TRANSLATE_STRUCTURED_JSON", "0") == "1":
-                    print("[Translation] Translating structured payload...")
+                    print("[Translation] Translating structured payload.")
                     structured_local = translator.translate_values(structured, "en", lang)
                     print("[Translation] Structured payload translated")
                 else:

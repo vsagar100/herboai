@@ -43,7 +43,7 @@ def _coerce_payload(data: dict) -> dict:
         if k in data: out[k] = _js(data[k])
     # Booleans/ints
     if "is_endangered" in data: out["is_endangered"] = int(bool(data["is_endangered"]))
-    # Explicitly ignore ayush_system_id (deprecated)
+    # ayush_system_id was removed from schema; ignore if legacy payloads send it
     # timestamps
     out["updated_at"] = datetime.utcnow().isoformat(sep=" ", timespec="seconds")
     return out

@@ -50,7 +50,7 @@ class AsyncTranslator:
     def _worker(self):
         while True:
             try:
-                job = self.request_queue.get(timeout=1)
+                job = self.request_queue.get(timeout=5)
                 if job is None:
                     break
 
@@ -88,7 +88,7 @@ class AsyncTranslator:
         return self._ready.is_set()
 
     def translate_async(
-        self, text: str, lang: str, timeout: int = 30, warm_timeout: int = 5
+        self, text: str, lang: str, timeout: int = 300, warm_timeout: int = 5
     ) -> Optional[str]:
         """
         Non-blocking translation with timeout. If the model is still warming
