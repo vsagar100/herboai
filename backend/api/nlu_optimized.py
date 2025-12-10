@@ -52,6 +52,42 @@ TRANSLITERATION_MAP = {
     "acidity": "अम्लपित्त", "gas": "वायु", "गॅस": "वायु"
 }
 
+_QUERY_STOPWORDS = {
+    "how", "to", "prepare", "make", "making", "do", "use", "usage",
+    "powder", "tablet", "decoction", "kwath", "kwatha", "kadha",
+    "syrup", "capsule", "oil", "taila", "ghrita",
+    "for", "of", "the", "a", "an", "is", "what", "tell", "me",
+    "dosage", "dose", "remedy", "info", "information", "guide",
+    "about", "benefits", "help"
+}
+
+
+def _tokenize_query_terms(query: str) -> List[str]:
+    """
+    Break query into unique tokens (>=3 chars) preserving order.
+    """
+    raw_tokens = re.findall(r"[A-Za-z\u0900-\u097F]+", (query or "").lower())
+    tokens: List[str] = []
+    seen = set()
+    for tok in raw_tokens:
+        if len(tok) < 3 or tok in seen:
+            continue
+        seen.add(tok)
+        tokens.append(tok)
+    return tokens
+
+
+def _prioritized_tokens(query: str) -> List[str]:
+    """
+    Return the most meaningful tokens for lookup (filter stopwords first).
+    """
+    tokens = _tokenize_query_terms(query)
+    if not tokens:
+        return []
+
+    meaningful = [tok for tok in tokens if tok not in _QUERY_STOPWORDS]
+    return meaningful or tokens
+
 def detect_language(text: str) -> str:
     """
     Fast language detection
@@ -155,7 +191,7 @@ def search_plants_fuzzy(query: str, limit: int = 5) -> List[Dict]:
     db = get_db()
     cur = db.cursor()
     
-    tokens = re.findall(r"[A-Za-z\u0900-\u097F]+", query.lower())
+    tokens = _prioritized_tokens(query)
     if not tokens:
         return []
     
@@ -164,9 +200,6 @@ def search_plants_fuzzy(query: str, limit: int = 5) -> List[Dict]:
     seen_ids = set()
     
     for token in tokens:
-        if len(token) < 3:  # Skip very short tokens
-            continue
-        
         variations = normalize_query_token(token)
         
         for variant in variations[:3]:  # Limit variations to prevent slowdown
@@ -220,7 +253,7 @@ def search_diseases_fuzzy(query: str, limit: int = 5) -> List[Dict]:
     db = get_db()
     cur = db.cursor()
     
-    tokens = re.findall(r"[A-Za-z\u0900-\u097F]+", query.lower())
+    tokens = _prioritized_tokens(query)
     if not tokens:
         return []
     
@@ -228,9 +261,6 @@ def search_diseases_fuzzy(query: str, limit: int = 5) -> List[Dict]:
     seen_ids = set()
     
     for token in tokens:
-        if len(token) < 3:
-            continue
-        
         variations = normalize_query_token(token)
         
         for variant in variations[:3]:

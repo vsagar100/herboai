@@ -1,10 +1,12 @@
 # api/vec_health.py
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 from db import get_db
 from sqlite_vec import serialize_float32
-from sentence_transformers import SentenceTransformer
+
+from services.vector_bootstrap import ensure_vector_indexes, rebuild_all_indexes
 
 bp = Blueprint("vec_health", __name__)
+
 
 @bp.get("/vec/health")
 def vec_health():
@@ -54,57 +56,26 @@ def vec_health():
     except Exception as e:
         return jsonify({"ok": False, "stage": "knn", "error": str(e)}), 500
 
+
 @bp.get("/vec/initialize")
 def vec_initialize():
     try:
-        db = get_db()
-        db.execute("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS disease_vec USING vec0(
-        disease_id INTEGER PRIMARY KEY,
-        name_en TEXT,
-        embedding FLOAT[384]
-        );
-        """)
-        db.execute("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS plant_vec USING vec0(
-        plant_id INTEGER PRIMARY KEY,
-        name_en TEXT,
-        embedding FLOAT[384]
-        );
-        """)
-        db.execute("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS prep_vec USING vec0(
-        preparation_id INTEGER PRIMARY KEY,
-        name_en TEXT,
-        embedding FLOAT[384]
-        );
-        """)
-        db.commit()
-        print("vec0 tables ready")
-        return jsonify({"ok": True, "message": "vec0 tables initialized"}), 200
+        stats = ensure_vector_indexes(force_full=True)
+        return jsonify({"ok": True, "message": "vec0 tables initialized", "reindexed": stats}), 200
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
-model = SentenceTransformer("all-MiniLM-L6-v2")
-
 @bp.post("/vec/reindex")
 def vec_reindex():
+    """
+    Trigger a full rebuild (default) or lightweight verification of all vector tables.
+    Pass ?full=0 to only rebuild tables that are stale.
+    """
+    full = request.args.get("full", "1").lower() not in {"0", "false", "no"}
     try:
-        db = get_db(); db.row_factory = None
-        rows = db.execute("""
-            SELECT id, name_en, description
-            FROM diseases
-            WHERE updated_at > datetime('now', '-1 day')
-        """).fetchall()
-        for rid, name, desc in rows:
-            vec = model.encode(f"{name} {desc or ''}").astype("float32").tolist()
-            db.execute("""
-                INSERT OR REPLACE INTO disease_vec(disease_id, name_en, embedding)
-                VALUES (?, ?, ?)
-            """, (rid, name, serialize_float32(vec)))
-        db.commit()
-        return jsonify({"ok": True, "updated": len(rows)})
+        stats = rebuild_all_indexes() if full else ensure_vector_indexes()
+        return jsonify({"ok": True, "reindexed": stats})
     except Exception as e:
         print("Error in /vec/reindex:", e)
         return jsonify({"ok": False, "error": str(e)}), 500

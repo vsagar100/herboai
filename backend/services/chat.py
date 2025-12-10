@@ -1,5 +1,5 @@
 # services/chat.py
-import time
+import time, logging
 import json
 import math
 import os
@@ -21,6 +21,9 @@ from services.response_builder import (
 )
 from api.context import get_last_context, persist_turn
 from semantic import top_plants_for_disease, top_preparations_for_disease, ingredients_for_preparation
+
+log = logging.getLogger("pipeline")
+
 
 # Global embedding model (lazy loaded)
 _EMB_MODEL = None
@@ -123,7 +126,40 @@ def build_herboai_context(
 
     return "\n\n".join(s for s in sections if s.strip())
 
+def is_preparation_like_query(user_text: str, text_for_intent: str | None) -> bool:
+    """
+    Heuristic: detect queries asking 'how to prepare / kadha / decoction / churna' etc.
+    Works on both the original text and the translated text_for_intent.
+    """
+    raw = (user_text or "").lower()
+    intent_txt = (text_for_intent or "").lower()
+    combined = raw + " " + intent_txt
 
+    # English / transliterated preparation keywords
+    prep_keywords_en = [
+        "how to make", "how to prepare", "recipe", "method", "steps",
+        "kadha", "kada", "kadhha",
+        "kwath", "kwatha",
+        "decoction", "kashaya", "kashayam",
+        "churna", "powder", "tablet", "vati",
+        "taila", "oil", "ghrita", "ghee",
+        "lehyam", "avaleha", "arishta", "asava", "syrup",
+    ]
+
+    # A few direct Devanagari hints
+    prep_keywords_local = [
+        "काढा", "काढ़ा", "काढ़ा", "काढा कसा", "काढा कसा बनवायचा",
+        "काढा कैसे", "काढ़ा कैसे", "कसे बनवायचे", "कसा बनवायचा",
+    ]
+
+    for kw in prep_keywords_en:
+        if kw in combined:
+            return True
+    for kw in prep_keywords_local:
+        if kw in combined:
+            return True
+
+    return False
 
 def _as_list(x):
     """Parse JSON array or return as-is"""
@@ -156,33 +192,93 @@ def _embed_384(text: str) -> bytes:
     v = _l2_normalize(v)
     return serialize_float32(v)
 
+_NAME_STOPWORDS = {
+    "how", "to", "prepare", "make", "do", "use", "usage",
+    "powder", "tablet", "decoction", "kwath", "kwatha", "kadha",
+    "syrup", "capsule", "oil", "taila", "ghrita",
+    "for", "of", "the", "a", "an", "is", "what", "tell", "me",
+    "dosage", "dose"
+}
+
+def _simple_tokens(text: str) -> list[str]:
+    """Lowercase a–z word tokens, skip very short / stopwords."""
+    if not text:
+        return []
+    import re
+    raw = re.findall(r"[a-zA-Z]+", text.lower())
+    return [w for w in raw if len(w) >= 3 and w not in _NAME_STOPWORDS]
 
 def _prioritize_name_match(items: List[Dict], query: str, keys: List[str]) -> List[Dict]:
-    """Bring exact/partial name matches to the front of the list."""
+    """
+    Bring the most likely plant/disease to the front.
+
+    Strategy:
+    1) Extract meaningful tokens from the query (e.g. 'gudmar', 'neem', 'triphala').
+    2) For each item, collect all name/synonym strings from `keys`.
+    3) Score items by token overlap with those names.
+       - More exact token matches => better score
+       - Then partial (substring) matches
+       - Fallback to old behaviour when no tokens match at all.
+    """
     if not items or not query:
         return items
 
-    q = query.lower().strip()
+    q_tokens = _simple_tokens(query)
+    if not q_tokens:
+        # Nothing useful to score on -> keep original behaviour
+        return items
 
-    def score(item: Dict) -> int:
-        names = []
+    def gather_names(item: Dict) -> list[str]:
+        names: list[str] = []
         for key in keys:
-            if not isinstance(item, dict):
-                continue
-            value = item.get(key)
-            if isinstance(value, str):
-                names.append(value.lower())
-            elif isinstance(value, list):
-                names.extend(v.lower() for v in value if isinstance(v, str))
-        if not names:
-            return 3
-        if any(q == name for name in names):
-            return 0
-        if any(name.startswith(q) or q in name for name in names):
-            return 1
-        return 2
+            val = item.get(key)
+            if isinstance(val, str):
+                names.append(val)
+            elif isinstance(val, list):
+                for v in val:
+                    if isinstance(v, str):
+                        names.append(v)
+        return names
 
-    return sorted(items, key=score)
+    def score_item(item: Dict) -> tuple[int, int, int]:
+        """
+        Lower score is better.
+        return: (primary_rank, secondary_rank, fallback_rank)
+        """
+        names = gather_names(item)
+        if not names:
+            # No names to compare -> send to end
+            return (3, 3, 3)
+
+        # Tokenize all names
+        name_tokens: set[str] = set()
+        for n in names:
+            for t in _simple_tokens(n):
+                name_tokens.add(t)
+
+        if not name_tokens:
+            # Names exist but nothing tokenizable; treat as weak
+            return (2, 3, 3)
+
+        exact = 0
+        partial = 0
+        for q in q_tokens:
+            if q in name_tokens:
+                exact += 1
+            elif any(q in t for t in name_tokens):
+                partial += 1
+
+        # If we have any exact matches, this is almost certainly the right plant.
+        if exact > 0:
+            return (0, -exact, -partial)  # more exact/partial -> smaller (better)
+        # Next prefer partial substring matches
+        if partial > 0:
+            return (1, -partial, 0)
+
+        # No overlap at all -> weak; keep order but behind others
+        return (2, 0, 0)
+
+    return sorted(items, key=score_item)
 
 # Optional preload to avoid first-request download latency
 if os.getenv("SENTENCE_PRELOAD", "0") == "1":
@@ -279,6 +375,105 @@ def _diseases_for_plant(plant_id: int, k: int = 5) -> List[Dict]:
 def _prune_vec_hits(hits: List[Dict], max_distance: float) -> List[Dict]:
     """Filter out weak vector matches"""
     return [h for h in hits if "distance" not in h or (h.get("distance", 999) <= max_distance)]
+
+def _preparations_for_plant(plant_id: int, k: int = 5) -> List[Dict]:
+    """Get preparations where this plant appears as an ingredient."""
+    db = get_db()
+    db.row_factory = lambda cursor, row: dict(zip([col[0] for col in cursor.description], row))
+
+    rows = db.execute("""
+        SELECT DISTINCT 
+            p.id, p.name_en, p.name_hi, p.name_mr, p.classical_name,
+            p.ayush_system,
+            p.form_type, p.category,
+            p.preparation_steps, p.equipment_needed, p.duration, p.yield, 
+            p.storage, p.shelf_life,
+            p.dosage_json, p.timing, p.anupana, p.notes
+        FROM preparations p
+        WHERE p.id IN (
+            SELECT DISTINCT preparation_id 
+            FROM preparation_ingredients pi
+            WHERE pi.plant_id = ?
+        )
+        ORDER BY p.id
+        LIMIT ?
+    """, (plant_id, k)).fetchall()
+
+    preps: List[Dict] = []
+    for r in rows:
+        d = dict(r)
+        # Normalize JSON-ish fields
+        for key in ["preparation_steps", "equipment_needed", "dosage_json"]:
+            val = d.get(key)
+            if isinstance(val, str):
+                try:
+                    d[key] = json.loads(val)
+                except Exception:
+                    d[key] = val
+        preps.append(d)
+    return preps
+
+
+def _build_plant_preparation_answer(plant: Dict[str, Any], preps: List[Dict[str, Any]]) -> str:
+    """Human-readable answer focused on how to prepare this plant's remedies."""
+    name_en = plant.get("common_name_en") or plant.get("botanical_name") or "the plant"
+    botanical = plant.get("botanical_name") or ""
+    header = f"For **{name_en}**"
+    if botanical:
+        header += f" (_{botanical}_)"
+    header += ", here are the preparations available in the HerboAI knowledge base:\n\n"
+
+    if not preps:
+        return (
+            header
+            + "Detailed step-by-step preparations are not yet stored for this plant in the database.\n"
+              "You can still use it only under guidance of a qualified Ayurvedic practitioner."
+        )
+
+    lines: List[str] = [header]
+    for i, prep in enumerate(preps, start=1):
+        pname = prep.get("name_en") or prep.get("classical_name") or "Unnamed preparation"
+        form = prep.get("form_type") or ""
+        lines.append(f"{i}. **{pname}**" + (f" ({form})" if form else ""))
+
+        # Steps
+        steps = prep.get("preparation_steps")
+        if isinstance(steps, list) and steps:
+            lines.append("   • Preparation steps:")
+            for idx, step in enumerate(steps[:8], start=1):
+                if isinstance(step, str):
+                    lines.append(f"     {idx}) {step.strip()}")
+
+        # Dosage
+        dosage = prep.get("dosage_json")
+        if isinstance(dosage, dict):
+            adult = dosage.get("adult")
+            child = dosage.get("child")
+            if adult or child:
+                lines.append("   • Typical dosage (for general guidance):")
+                if adult:
+                    lines.append(f"     – Adult: {adult}")
+                if child:
+                    lines.append(f"     – Child: {child}")
+
+        # Timing & Anupana
+        if prep.get("timing"):
+            lines.append(f"   • Timing: {prep['timing']}")
+        if prep.get("anupana"):
+            lines.append(f"   • Anupana: {prep['anupana']}")
+
+        if prep.get("notes"):
+            notes = prep["notes"]
+            if isinstance(notes, str):
+                lines.append(f"   • Notes: {notes.strip()}")
+
+        lines.append("")  # Blank line between preparations
+
+    lines.append(
+        "⚠️ This information is for educational purposes only. "
+        "Always confirm dosage and suitability with a qualified Ayurvedic practitioner."
+    )
+    return "\n".join(lines)
 
 # ============================================================================
 # KNOWLEDGE CONTEXT BUILDING
@@ -442,30 +637,45 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
     4. Deterministic answer + translation (no external LLM yet)
     5. Return structured result
     """
-    t0 = time.time()
+    t0 = time.perf_counter()
     
     # Step 1: Language detection (no translation yet)
     lang = detect_language(user_text)
     print(f"[Pipeline] Language: {lang}")
     translator = None
+    t1 = time.perf_counter()
     async_tx = get_async_translator()
-
+    t2 = time.perf_counter()
     # Step 2: Translate ONLY for intent classification (internal routing)
     # Keep best-effort: if the heavy model is still loading, skip to avoid blocking.
     text_for_intent = user_text
+    t3=t4=t5=0
     if lang != "en":
         if async_tx.is_ready():
             try:
+                t3 = time.perf_counter()
                 translator = get_indic_translation_service()
+                t4 = time.perf_counter()
                 text_for_intent = translator.to_en(user_text, src_lang=lang)
+                t5 = time.perf_counter()
                 print(f"[Translate] Query -> EN (intent): {text_for_intent}")
             except Exception as exc:
                 print(f"[Translate] Skipping intent translation: {exc}")
         else:
+            t3 = time.perf_counter()
             async_tx.warmup()
+            t4 = time.perf_counter()
             print("[Translate] Translator warming up; using original text for intent")
+            t5 = time.perf_counter()
+    t6 = time.perf_counter()
     intent = classify_intent(text_for_intent)
     print(f"[Pipeline] Intent: {intent} (text_for_intent={text_for_intent})")
+        # Heuristic override: if user is clearly asking "how to prepare / kadha / decoction / churna"
+    # then treat this as preparation_info regardless of what the classifier said.
+    if is_preparation_like_query(user_text, text_for_intent):
+        print("[Heuristic] Overriding intent -> preparation_info (prep-like query)")
+        intent = "preparation_info"
+
     
     # Step 3: Entity extraction (works on original multilingual query)
     plants, diseases = extract_entities(user_text, text_for_intent, prefer_en=(lang != "en"))
@@ -512,13 +722,12 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
                 diseases_full.append(full)
     
     # Step 6: Context recall from conversation
+        # Step 6: Context recall from conversation
     last = get_last_context(session_id) if session_id else None
     if not diseases_full and last and last.get("entities", {}).get("diseases"):
         diseases_full = last["entities"]["diseases"][:2]
     if not plants_full and last and last.get("entities", {}).get("plants"):
         plants_full = last["entities"]["plants"][:2]
-    if intent == "none" and last:
-        intent = last.get("intent", "none")
 
     # Heuristic: if the query text implies "for <condition>" and we found diseases,
     # prefer remedy_lookup even if the classifier leaned plant_info.
@@ -526,7 +735,39 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
     if intent != "remedy_lookup" and diseases_full:
         if any(needle in text_lower for needle in [" साठी", "साठी", "के लिए", "for "]):
             intent = "remedy_lookup"
-    
+
+    # >>> NEW: re-prioritize hydrated entities based on the actual names <<<
+    name_hint = text_for_intent or user_text
+
+    if plants_full:
+        plants_full = _prioritize_name_match(
+            plants_full,
+            name_hint,
+            [
+                "common_name_en",
+                "botanical_name",
+                "common_name_hi",
+                "common_name_mr",
+                "sanskrit_name",
+                "synonym",
+                "name",
+            ],
+        )
+
+    if diseases_full:
+        diseases_full = _prioritize_name_match(
+            diseases_full,
+            name_hint,
+            [
+                "name_en",
+                "name_hi",
+                "name_mr",
+                "ayurvedic_name",
+                "synonym",
+                "name",
+            ],
+        )
+
     print(f"[Pipeline] After hydration: {len(plants_full)} plants, {len(diseases_full)} diseases")
     
     # Step 7: Deterministic, chat-style response generation (no external LLM yet)
@@ -534,7 +775,35 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
     structured: Dict[str, Any] = {}
     answer_text_en = ""
 
-    if intent in ("remedy_lookup", "preparation_info") and diseases_full:
+    # --- 7A: Preparation-info should be PLANT-centric when a plant is clear ---
+    if intent == "preparation_info":
+        if plants_full:
+            plant = plants_full[0]
+            preps = _preparations_for_plant(plant["id"], k=5)
+            structured = {
+                "plant": plant,
+                "preparations": preps,
+            }
+            answer_text_en = _build_plant_preparation_answer(plant, preps)
+        elif diseases_full:
+            # Fallback: if user asked "how to prepare decoction for <disease>"
+            disease_row = diseases_full[0]
+            structured = {
+                "disease": disease_row,
+                "plants": top_plants_for_disease(disease_row["id"], k=5),
+                "preparations": top_preparations_for_disease(disease_row["id"], k=3),
+            }
+            answer_text_en = build_remedy_answer(
+                disease_row,
+                structured["plants"],
+                structured["preparations"],
+            )
+        else:
+            structured = {}
+            answer_text_en = build_no_data_answer(user_text)
+
+    # --- 7B: Disease-centric remedy lookup ---
+    elif intent == "remedy_lookup" and diseases_full:
         disease_row = diseases_full[0]
         structured = {
             "disease": disease_row,
@@ -547,6 +816,7 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
             structured["preparations"],
         )
 
+    # --- 7C: Pure plant information ---
     elif intent == "plant_info" and plants_full:
         plant = plants_full[0]
         structured = {
@@ -555,6 +825,7 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
         }
         answer_text_en = build_plant_answer(plant)
 
+    # --- 7D: Generic “I found some plants/diseases” answer ---
     elif plants_full or diseases_full:
         structured = {
             "plants": plants_full,
@@ -562,9 +833,11 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
         }
         answer_text_en = build_generic_answer(plants_full, diseases_full)
 
+    # --- 7E: No entities at all ---
     else:
         structured = {}
         answer_text_en = build_no_data_answer(user_text)
+
 
     # Light conversational wrapper so it feels like an AI guide
     if answer_text_en:
@@ -581,7 +854,12 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
             answer_text_en = prefix + answer_text_en
 
     print(f"[Pipeline] Answer (en): {answer_text_en}")
-
+    t7 =0
+    t8=0
+    t9=0
+    t10=0
+    t11=0
+    t12=0
     answer_text = answer_text_en
     structured_local = structured
     if lang != "en":
@@ -589,17 +867,21 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
 
         # First, try async with a short timeout
         try:
+            t7 = time.perf_counter()
             translated = async_tx.translate_async(
                 answer_text_en, lang, timeout=3000, warm_timeout=8
             )
+            t8 = time.perf_counter()
         except Exception as exc:  # pragma: no cover - runtime failure guard
             print(f"[Translation] Async worker error: {exc}")
 
         # If async timed out/failed, fall back to sync translate (model should be warm by now)
         if not translated:
-            try:
+            try:                
                 translator = translator or get_indic_translation_service()
+                t9 = time.perf_counter()
                 translated = translator.translate_text(answer_text_en, "en", lang)
+                t10 = time.perf_counter()
                 print("[Translation] Used sync translator after async timeout")
             except Exception as exc:
                 print(f"[Translation] Sync fallback failed: {exc}")
@@ -609,6 +891,7 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
             print(f"[Translation] Answer ({lang}): {answer_text}")
             try:
                 translator = translator or get_indic_translation_service()
+                t11 = time.perf_counter()
                 if structured and os.getenv("TRANSLATE_STRUCTURED_JSON", "0") == "1":
                     print("[Translation] Translating structured payload.")
                     structured_local = translator.translate_values(structured, "en", lang)
@@ -616,6 +899,7 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
                 else:
                     structured_local = structured
                     print("[Translation] Skipped structured payload translation")
+                t12 = time.perf_counter()
             except Exception as exc:
                 print(f"[Translation] Structured fallback: {exc}")
                 structured_local = structured
@@ -643,6 +927,13 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
     )
     print(f"[Pipeline] Complete in {duration_ms}ms")
 
+    log.info("timings(s): detect_language=%.2f get_async_translator=%.2f other=%.2f "
+         "get_async_translator=%.2f translator.to_en=%.2f classify_intent=%.2f "
+         "async_tx.translate_async=%.2f get_indic_translation_service=%.2f "
+         "translator.translate_text=%.2f translate_values=%.2f total=%.2f",
+         t1-t0, t2-t1, t3-t2, t4-t3, t5-t4, t7-t5, t8-t7, t9-t8, t10-t9, 
+         (t11 - t10) if t10 != 0 else (t11 - t8), t12 - t0)
+    
     return {
         "answer": answer_text,
         "intent": intent,

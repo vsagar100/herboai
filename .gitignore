@@ -9,3 +9,4 @@ backend/node_modules/__pycache__
 backend/database/sqlite3.exe
 backend/models/*.gguf
 *.pyc
+LETTER.*

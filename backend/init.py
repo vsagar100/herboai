@@ -94,21 +94,37 @@ def create_app(config_object: type[Config] = Config) -> Flask:
             from services.async_translator import get_async_translator
             tx = get_async_translator()
             translator_ready = tx.is_ready()
+            has_translator = tx.translator is not None
         except Exception:
             translator_ready = False
+            has_translator = False
         
         return {
             "status": "ok",
             "service": "herboai-backend",
-            "translator_ready": translator_ready
+            "translator_ready": translator_ready,
+             "translator_loaded": has_translator
         }, 200
 
     # Start model preloading in background thread
     # daemon=False ensures thread completes even during shutdown
     preload_thread = threading.Thread(target=preload_models, daemon=False)
     preload_thread.start()
-    
+
+    def _vector_bootstrapper():
+        with app.app_context():
+            from services.vector_bootstrap import ensure_vector_indexes
+            try:
+                stats = ensure_vector_indexes()
+                print(f"[Startup] Vector indexes ready: {stats}")
+            except Exception as exc:
+                print(f"[Startup] Vector index bootstrap failed: {exc}")
+
+    vector_thread = threading.Thread(target=_vector_bootstrapper, daemon=False)
+    vector_thread.start()
+
     print("[Startup] Model preload started in background")
+    print("[Startup] Vector indexing started in background")
     print("[Startup] Server will be responsive immediately, translations ready after preload completes")
 
     return app

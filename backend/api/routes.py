@@ -298,11 +298,16 @@ def query():
             }
         
         elif "plant" in structured:
-            # Plant info case - frontend expects singular "plant"
-            response["structured"] = {
+            # Plant info / plant preparation case
+            response_struct = {
                 "plant": structured["plant"],
-                "plants": [structured["plant"]]  # Also as array for consistency
+                "plants": [structured["plant"]],
             }
+            if "preparations" in structured:
+                # Limit for UI; you can adjust or paginate later
+                response_struct["preparations"] = structured["preparations"][:3]
+            response["structured"] = response_struct
+
         
         else:
             # Generic case

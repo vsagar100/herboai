@@ -129,7 +129,7 @@ export default function PreparationModal({ open, initial, onClose, onSaved }) {
       name_hi: v.name_hi || "",
       name_mr: v.name_mr || "",
       classical_name: v.classical_name || "",
-      ayush_system_id: v.ayush_system_id || 1,
+      ayush_system: v.ayush_system || "",
       form_type: v.form_type || "",
       category: v.category || "",
       duration: v.duration || "",
@@ -164,7 +164,6 @@ export default function PreparationModal({ open, initial, onClose, onSaved }) {
 
     const payload = {
       ...form,
-      ayush_system_id: Number(form.ayush_system_id || 1),
       preparation_steps: cleanArray(steps),
       equipment_needed: cleanArray(equipment).length ? cleanArray(equipment) : null,
       dosage_json: (dosage.adult || dosage.child) ? { adult: dosage.adult || "", child: dosage.child || "" } : null,

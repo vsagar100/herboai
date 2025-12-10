@@ -1,17 +1,4 @@
-
--- ============================================================================
--- HERBOAI DATABASE SCHEMA v2 (SQLite)
--- Focus: Multilingual herbs, evidence-linked remedies, normalized preparations,
--- safety metadata, FTS + vectors, and compatibility view for "remedies".
--- ============================================================================
-
-PRAGMA foreign_keys = ON;
-
--- ============================================================================
--- CORE ENTITIES
--- ============================================================================
-
-CREATE TABLE IF NOT EXISTS plants (
+CREATE TABLE IF NOT EXISTS "plants" (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   botanical_name TEXT NOT NULL UNIQUE,
   common_name_en TEXT,
@@ -19,53 +6,33 @@ CREATE TABLE IF NOT EXISTS plants (
   common_name_mr TEXT,
   sanskrit_name TEXT,
   family TEXT,
-  ayush_system TEXT,
   description TEXT,
   habitat TEXT,
-  parts_used TEXT,                 -- JSON array ["root","leaf",...]
-  rasa TEXT,                       -- JSON array ["madhura","tikta"]
-  virya TEXT,                      -- "ushna" or "sheeta" etc.
+  parts_used TEXT,
+  rasa TEXT,
+  virya TEXT,
   vipaka TEXT,
-  guna TEXT,                       -- JSON array
-  dosha_effect TEXT,               -- JSON {"vata":"reduces","pitta":"neutral","kapha":"reduces"}
+  guna TEXT,
+  dosha_effect TEXT,
   prabhava TEXT,
-  active_compounds TEXT,           -- JSON array
-  therapeutic_actions TEXT,        -- JSON array
-  classical_references TEXT,       -- JSON array
+  active_compounds TEXT,
+  therapeutic_actions TEXT,
+  classical_references TEXT,
   is_endangered INTEGER DEFAULT 0,
-  cultivation_status TEXT,         -- "wild","cultivated","both"
-  image_hero TEXT,                 -- optional hero image path/url
+  cultivation_status TEXT,
+  image_hero TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  ayush_system TEXT,
   CHECK (json_valid(parts_used) OR parts_used IS NULL),
   CHECK (json_valid(rasa) OR rasa IS NULL),
   CHECK (json_valid(guna) OR guna IS NULL),
   CHECK (json_valid(dosha_effect) OR dosha_effect IS NULL),
-  CHECK (json_valid(active_compounds) OR active_compounds IS NULL),
-  CHECK (json_valid(therapeutic_actions) OR therapeutic_actions IS NULL),
-  CHECK (json_valid(classical_references) OR classical_references IS NULL)
+ -- CHECK (json_valid(active_compounds) OR active_compounds IS NULL),
+ -- CHECK (json_valid(classical_references) OR classical_references IS NULL),
+  CHECK (json_valid(therapeutic_actions) OR therapeutic_actions IS NULL)
 );
-
-CREATE TRIGGER IF NOT EXISTS trg_plants_updated
-AFTER UPDATE ON plants FOR EACH ROW
-BEGIN
-  UPDATE plants SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
-END;
-
--- Media (multiple images/videos per plant, local-friendly paths)
-CREATE TABLE IF NOT EXISTS media (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  plant_id INTEGER NOT NULL,
-  path TEXT NOT NULL,            -- relative file path (preferred) or URL
-  alt_text TEXT,
-  type TEXT DEFAULT 'image',     -- image | video | diagram
-  is_primary INTEGER DEFAULT 0,
-  attribution TEXT,
-  FOREIGN KEY (plant_id) REFERENCES plants(id) ON DELETE CASCADE
-);
-
--- Synonyms for plants (regional/trade names etc.)
-CREATE TABLE IF NOT EXISTS plant_synonyms (
+CREATE TABLE plant_synonyms (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   plant_id INTEGER NOT NULL,
   synonym TEXT NOT NULL,
@@ -73,9 +40,7 @@ CREATE TABLE IF NOT EXISTS plant_synonyms (
   kind TEXT,                     -- "common_name","regional_name","trade_name"
   FOREIGN KEY (plant_id) REFERENCES plants(id) ON DELETE CASCADE
 );
-
--- Diseases/conditions
-CREATE TABLE IF NOT EXISTS diseases (
+CREATE TABLE diseases (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name_en TEXT NOT NULL,
   name_hi TEXT,
@@ -93,7 +58,7 @@ CREATE TABLE IF NOT EXISTS diseases (
   is_lifestyle_related INTEGER DEFAULT 0,
   prevention_tips TEXT,          -- JSON array
   dietary_recommendations TEXT,  -- JSON
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP,
   CHECK (json_valid(symptoms) OR symptoms IS NULL),
   CHECK (json_valid(causes) OR causes IS NULL),
   CHECK (json_valid(dosha_involvement) OR dosha_involvement IS NULL),
@@ -101,17 +66,14 @@ CREATE TABLE IF NOT EXISTS diseases (
   CHECK (json_valid(prevention_tips) OR prevention_tips IS NULL),
   CHECK (json_valid(dietary_recommendations) OR dietary_recommendations IS NULL)
 );
-
-CREATE TABLE IF NOT EXISTS disease_synonyms (
+CREATE TABLE disease_synonyms (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   disease_id INTEGER NOT NULL,
   synonym TEXT NOT NULL,
   language TEXT,
   FOREIGN KEY (disease_id) REFERENCES diseases(id) ON DELETE CASCADE
 );
-
--- Herb ↔ Disease mapping with evidence
-CREATE TABLE IF NOT EXISTS plant_disease_mapping (
+CREATE TABLE plant_disease_mapping (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   plant_id INTEGER NOT NULL,
   disease_id INTEGER NOT NULL,
@@ -127,14 +89,13 @@ CREATE TABLE IF NOT EXISTS plant_disease_mapping (
   FOREIGN KEY (disease_id) REFERENCES diseases(id) ON DELETE CASCADE
 );
 
--- Preparations/formulations (normalized)
 CREATE TABLE IF NOT EXISTS preparations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name_en TEXT NOT NULL,
   name_hi TEXT,
   name_mr TEXT,
   classical_name TEXT,
-  ayush_system TEXT,
+  ayush_system TEXT NOT NULL DEFAULT 1,
   form_type TEXT NOT NULL,        -- decoction, paste, powder, oil, ghrta, lehya, tablet
   category TEXT,                  -- single_herb, compound, patent_medicine
   preparation_steps TEXT NOT NULL, -- JSON array of steps
@@ -148,14 +109,12 @@ CREATE TABLE IF NOT EXISTS preparations (
   anupana TEXT,                   -- honey, water, milk, etc.
   notes TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP,
   CHECK (json_valid(preparation_steps)),
   CHECK (json_valid(equipment_needed) OR equipment_needed IS NULL),
-  CHECK (json_valid(dosage_json) OR dosage_json IS NULL)
+  CHECK (json_valid(dosage_json) OR dosage_json IS NULL)  
 );
 
--- Many-to-many: preparation ↔ ingredients (plants/parts/qty)
-CREATE TABLE IF NOT EXISTS preparation_ingredients (
+CREATE TABLE preparation_ingredients (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   preparation_id INTEGER NOT NULL,
   plant_id INTEGER NOT NULL,
@@ -166,9 +125,7 @@ CREATE TABLE IF NOT EXISTS preparation_ingredients (
   FOREIGN KEY (preparation_id) REFERENCES preparations(id) ON DELETE CASCADE,
   FOREIGN KEY (plant_id) REFERENCES plants(id) ON DELETE RESTRICT
 );
-
--- Many-to-many: preparation ↔ indications (diseases)
-CREATE TABLE IF NOT EXISTS preparation_indications (
+CREATE TABLE preparation_indications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   preparation_id INTEGER NOT NULL,
   disease_id INTEGER NOT NULL,
@@ -178,9 +135,7 @@ CREATE TABLE IF NOT EXISTS preparation_indications (
   FOREIGN KEY (preparation_id) REFERENCES preparations(id) ON DELETE CASCADE,
   FOREIGN KEY (disease_id) REFERENCES diseases(id) ON DELETE RESTRICT
 );
-
--- Safety
-CREATE TABLE IF NOT EXISTS contraindications (
+CREATE TABLE contraindications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   plant_id INTEGER NOT NULL,
   condition TEXT NOT NULL,        -- pregnancy, lactation, hypertension...
@@ -190,8 +145,7 @@ CREATE TABLE IF NOT EXISTS contraindications (
   reference TEXT,
   FOREIGN KEY (plant_id) REFERENCES plants(id) ON DELETE CASCADE
 );
-
-CREATE TABLE IF NOT EXISTS interactions (
+CREATE TABLE interactions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   plant_id INTEGER NOT NULL,
   interaction_type TEXT NOT NULL CHECK(interaction_type IN ('drug','herb','food','supplement')),
@@ -203,9 +157,7 @@ CREATE TABLE IF NOT EXISTS interactions (
   reference TEXT,
   FOREIGN KEY (plant_id) REFERENCES plants(id) ON DELETE CASCADE
 );
-
--- Embeddings (per-language + provenance)
-CREATE TABLE IF NOT EXISTS plant_embeddings (
+CREATE TABLE plant_embeddings (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   plant_id INTEGER NOT NULL,
   lang TEXT NOT NULL DEFAULT 'multilingual',
@@ -218,8 +170,7 @@ CREATE TABLE IF NOT EXISTS plant_embeddings (
   UNIQUE (plant_id, lang, model_name, model_version),
   FOREIGN KEY (plant_id) REFERENCES plants(id) ON DELETE CASCADE
 );
-
-CREATE TABLE IF NOT EXISTS disease_embeddings (
+CREATE TABLE disease_embeddings (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   disease_id INTEGER NOT NULL,
   lang TEXT NOT NULL DEFAULT 'multilingual',
@@ -232,8 +183,7 @@ CREATE TABLE IF NOT EXISTS disease_embeddings (
   UNIQUE (disease_id, lang, model_name, model_version),
   FOREIGN KEY (disease_id) REFERENCES diseases(id) ON DELETE CASCADE
 );
-
-CREATE TABLE IF NOT EXISTS preparation_embeddings (
+CREATE TABLE preparation_embeddings (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   preparation_id INTEGER NOT NULL,
   lang TEXT NOT NULL DEFAULT 'multilingual',
@@ -246,9 +196,7 @@ CREATE TABLE IF NOT EXISTS preparation_embeddings (
   UNIQUE (preparation_id, lang, model_name, model_version),
   FOREIGN KEY (preparation_id) REFERENCES preparations(id) ON DELETE CASCADE
 );
-
--- Telemetry
-CREATE TABLE IF NOT EXISTS conversations (
+CREATE TABLE conversations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id TEXT NOT NULL,
   user_query TEXT NOT NULL,
@@ -264,45 +212,22 @@ CREATE TABLE IF NOT EXISTS conversations (
   CHECK (json_valid(entities) OR entities IS NULL),
   CHECK (json_valid(structured_data) OR structured_data IS NULL)
 );
-
--- ============================================================================
--- FULL-TEXT SEARCH
--- ============================================================================
-
-CREATE VIRTUAL TABLE IF NOT EXISTS plants_fts USING fts5(
+CREATE VIRTUAL TABLE plants_fts USING fts5(
   botanical_name, common_name_en, common_name_hi, common_name_mr, description,
   content='plants', content_rowid='id'
 );
-CREATE VIRTUAL TABLE IF NOT EXISTS diseases_fts USING fts5(
+CREATE VIRTUAL TABLE diseases_fts USING fts5(
   name_en, name_hi, name_mr, description, symptoms,
   content='diseases', content_rowid='id'
 );
-CREATE VIRTUAL TABLE IF NOT EXISTS preparations_fts USING fts5(
+CREATE VIRTUAL TABLE preparations_fts USING fts5(
   name_en, name_hi, name_mr, classical_name, form_type, notes
 );
-
-CREATE TRIGGER IF NOT EXISTS trg_plants_fts_ai AFTER INSERT ON plants BEGIN
-  INSERT INTO plants_fts(rowid, botanical_name, common_name_en, common_name_hi, common_name_mr, description)
-  VALUES (new.id, new.botanical_name, new.common_name_en, new.common_name_hi, new.common_name_mr, new.description);
-END;
-CREATE TRIGGER IF NOT EXISTS trg_plants_fts_au AFTER UPDATE ON plants BEGIN
-  UPDATE plants_fts SET
-    botanical_name = new.botanical_name,
-    common_name_en = new.common_name_en,
-    common_name_hi = new.common_name_hi,
-    common_name_mr = new.common_name_mr,
-    description = new.description
-  WHERE rowid = new.id;
-END;
-CREATE TRIGGER IF NOT EXISTS trg_plants_fts_ad AFTER DELETE ON plants BEGIN
-  DELETE FROM plants_fts WHERE rowid = old.id;
-END;
-
-CREATE TRIGGER IF NOT EXISTS trg_diseases_fts_ai AFTER INSERT ON diseases BEGIN
+CREATE TRIGGER trg_diseases_fts_ai AFTER INSERT ON diseases BEGIN
   INSERT INTO diseases_fts(rowid, name_en, name_hi, name_mr, description, symptoms)
   VALUES (new.id, new.name_en, new.name_hi, new.name_mr, new.description, new.symptoms);
 END;
-CREATE TRIGGER IF NOT EXISTS trg_diseases_fts_au AFTER UPDATE ON diseases BEGIN
+CREATE TRIGGER trg_diseases_fts_au AFTER UPDATE ON diseases BEGIN
   UPDATE diseases_fts SET
     name_en = new.name_en,
     name_hi = new.name_hi,
@@ -311,15 +236,122 @@ CREATE TRIGGER IF NOT EXISTS trg_diseases_fts_au AFTER UPDATE ON diseases BEGIN
     symptoms = new.symptoms
   WHERE rowid = new.id;
 END;
-CREATE TRIGGER IF NOT EXISTS trg_diseases_fts_ad AFTER DELETE ON diseases BEGIN
+CREATE TRIGGER trg_diseases_fts_ad AFTER DELETE ON diseases BEGIN
   DELETE FROM diseases_fts WHERE rowid = old.id;
 END;
+CREATE INDEX idx_diseases_category ON diseases(category);
+CREATE INDEX idx_diseases_severity ON diseases(severity_level);
+CREATE INDEX idx_pdm_disease ON plant_disease_mapping(disease_id, efficacy_level);
+CREATE INDEX idx_pdm_plant ON plant_disease_mapping(plant_id, evidence_type);
+CREATE INDEX idx_prep_ing_p ON preparation_ingredients(preparation_id);
+CREATE INDEX idx_prep_ing_pl ON preparation_ingredients(plant_id);
+CREATE INDEX idx_prep_ind_d ON preparation_indications(disease_id);
+CREATE INDEX idx_contra_plant ON contraindications(plant_id);
+CREATE INDEX idx_interact_plant ON interactions(plant_id);
+CREATE INDEX idx_conv_session ON conversations(session_id);
+CREATE TABLE schema_version (
+  version TEXT PRIMARY KEY,
+  applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  description TEXT
+);
+CREATE TRIGGER trg_diseases_updated
+AFTER UPDATE ON diseases FOR EACH ROW
+BEGIN
+  UPDATE diseases SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+END;
+CREATE INDEX idx_plant_synonyms_text
+  ON plant_synonyms(synonym, language);
+CREATE INDEX idx_disease_synonyms_text
+  ON disease_synonyms(synonym, language);
+CREATE TABLE admin_users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    is_active INTEGER DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_admin_users_email ON admin_users(email);
 
-CREATE TRIGGER IF NOT EXISTS trg_preps_fts_ai AFTER INSERT ON preparations BEGIN
+CREATE TABLE IF NOT EXISTS "vec_health_demo_info" (key text primary key, value any);
+CREATE TABLE IF NOT EXISTS "vec_health_demo_chunks"(chunk_id INTEGER PRIMARY KEY AUTOINCREMENT,size INTEGER NOT NULL,validity BLOB NOT NULL,rowids BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS "vec_health_demo_rowids"(rowid INTEGER PRIMARY KEY AUTOINCREMENT,id,chunk_id INTEGER,chunk_offset INTEGER);
+CREATE TABLE IF NOT EXISTS "vec_health_demo_vector_chunks00"(rowid PRIMARY KEY,vectors BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS "vec_health_demo_metadatachunks00"(rowid PRIMARY KEY, data BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS "vec_health_demo_metadatatext00"(rowid PRIMARY KEY, data TEXT);
+CREATE TABLE IF NOT EXISTS "disease_vec_info" (key text primary key, value any);
+CREATE TABLE IF NOT EXISTS "disease_vec_chunks"(chunk_id INTEGER PRIMARY KEY AUTOINCREMENT,size INTEGER NOT NULL,validity BLOB NOT NULL,rowids BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS "disease_vec_rowids"(rowid INTEGER PRIMARY KEY AUTOINCREMENT,id,chunk_id INTEGER,chunk_offset INTEGER);
+CREATE TABLE IF NOT EXISTS "disease_vec_vector_chunks00"(rowid PRIMARY KEY,vectors BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS "disease_vec_metadatachunks00"(rowid PRIMARY KEY, data BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS "disease_vec_metadatatext00"(rowid PRIMARY KEY, data TEXT);
+CREATE TABLE IF NOT EXISTS "plant_vec_info" (key text primary key, value any);
+CREATE TABLE IF NOT EXISTS "plant_vec_chunks"(chunk_id INTEGER PRIMARY KEY AUTOINCREMENT,size INTEGER NOT NULL,validity BLOB NOT NULL,rowids BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS "plant_vec_rowids"(rowid INTEGER PRIMARY KEY AUTOINCREMENT,id,chunk_id INTEGER,chunk_offset INTEGER);
+CREATE TABLE IF NOT EXISTS "plant_vec_vector_chunks00"(rowid PRIMARY KEY,vectors BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS "plant_vec_metadatachunks00"(rowid PRIMARY KEY, data BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS "plant_vec_metadatatext00"(rowid PRIMARY KEY, data TEXT);
+CREATE TABLE IF NOT EXISTS "prep_vec_info" (key text primary key, value any);
+CREATE TABLE IF NOT EXISTS "prep_vec_chunks"(chunk_id INTEGER PRIMARY KEY AUTOINCREMENT,size INTEGER NOT NULL,validity BLOB NOT NULL,rowids BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS "prep_vec_rowids"(rowid INTEGER PRIMARY KEY AUTOINCREMENT,id,chunk_id INTEGER,chunk_offset INTEGER);
+CREATE TABLE IF NOT EXISTS "prep_vec_vector_chunks00"(rowid PRIMARY KEY,vectors BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS "prep_vec_metadatachunks00"(rowid PRIMARY KEY, data BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS "prep_vec_metadatatext00"(rowid PRIMARY KEY, data TEXT);
+
+CREATE TABLE IF NOT EXISTS "preparations" (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name_en TEXT NOT NULL,
+  name_hi TEXT,
+  name_mr TEXT,
+  classical_name TEXT,
+  form_type TEXT NOT NULL,
+  category TEXT,
+  preparation_steps TEXT NOT NULL,
+  equipment_needed TEXT,
+  duration TEXT,
+  yield TEXT,
+  storage TEXT,
+  shelf_life TEXT,
+  dosage_json TEXT,
+  timing TEXT,
+  anupana TEXT,
+  notes TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP,
+  ayush_system TEXT
+);
+CREATE TRIGGER trg_plants_updated
+AFTER UPDATE ON plants FOR EACH ROW
+BEGIN
+  UPDATE plants SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+END;
+CREATE TRIGGER trg_plants_fts_ai AFTER INSERT ON plants BEGIN
+  INSERT INTO plants_fts(rowid, botanical_name, common_name_en, common_name_hi, common_name_mr, description)
+  VALUES (new.id, new.botanical_name, new.common_name_en, new.common_name_hi, new.common_name_mr, new.description);
+END;
+CREATE TRIGGER trg_plants_fts_au AFTER UPDATE ON plants BEGIN
+  UPDATE plants_fts SET
+    botanical_name = new.botanical_name,
+    common_name_en = new.common_name_en,
+    common_name_hi = new.common_name_hi,
+    common_name_mr = new.common_name_mr,
+    description = new.description
+  WHERE rowid = new.id;
+END;
+CREATE TRIGGER trg_plants_fts_ad AFTER DELETE ON plants BEGIN
+  DELETE FROM plants_fts WHERE rowid = old.id;
+END;
+CREATE TRIGGER trg_preparations_updated
+AFTER UPDATE ON preparations FOR EACH ROW
+BEGIN
+  UPDATE preparations SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+END;
+CREATE TRIGGER trg_preps_fts_ai AFTER INSERT ON preparations BEGIN
   INSERT INTO preparations_fts(rowid, name_en, name_hi, name_mr, classical_name, form_type, notes)
   VALUES (new.id, new.name_en, new.name_hi, new.name_mr, new.classical_name, new.form_type, new.notes);
 END;
-CREATE TRIGGER IF NOT EXISTS trg_preps_fts_au AFTER UPDATE ON preparations BEGIN
+CREATE TRIGGER trg_preps_fts_au AFTER UPDATE ON preparations BEGIN
   UPDATE preparations_fts SET
     name_en = new.name_en,
     name_hi = new.name_hi,
@@ -329,16 +361,10 @@ CREATE TRIGGER IF NOT EXISTS trg_preps_fts_au AFTER UPDATE ON preparations BEGIN
     notes = new.notes
   WHERE rowid = new.id;
 END;
-CREATE TRIGGER IF NOT EXISTS trg_preps_fts_ad AFTER DELETE ON preparations BEGIN
+CREATE TRIGGER trg_preps_fts_ad AFTER DELETE ON preparations BEGIN
   DELETE FROM preparations_fts WHERE rowid = old.id;
 END;
-
--- ============================================================================
--- COMPATIBILITY VIEW (read-only) FOR "remedy"-style ANSWERS
--- Aggregates plant + disease + top preparation into a single rowset.
--- ============================================================================
-
-CREATE VIEW IF NOT EXISTS remedy_view AS
+CREATE VIEW remedy_view AS
 SELECT
   pdm.disease_id,
   d.name_en AS disease_en,
@@ -359,21 +385,4 @@ JOIN plants p ON p.id = pdm.plant_id
 JOIN diseases d ON d.id = pdm.disease_id
 LEFT JOIN preparation_indications pi ON pi.disease_id = d.id
 LEFT JOIN preparations pr ON pr.id = pi.preparation_id;
-
--- ============================================================================
--- INDEXES
--- ============================================================================
-
-CREATE INDEX IF NOT EXISTS idx_plants_botanical ON plants(botanical_name);
-CREATE INDEX IF NOT EXISTS idx_diseases_category ON diseases(category);
-CREATE INDEX IF NOT EXISTS idx_diseases_severity ON diseases(severity_level);
-CREATE INDEX IF NOT EXISTS idx_pdm_disease ON plant_disease_mapping(disease_id, efficacy_level);
-CREATE INDEX IF NOT EXISTS idx_pdm_plant ON plant_disease_mapping(plant_id, evidence_type);
-CREATE INDEX IF NOT EXISTS idx_media_plant ON media(plant_id);
-CREATE INDEX IF NOT EXISTS idx_prep_type ON preparations(form_type);
-CREATE INDEX IF NOT EXISTS idx_prep_ing_p ON preparation_ingredients(preparation_id);
-CREATE INDEX IF NOT EXISTS idx_prep_ing_pl ON preparation_ingredients(plant_id);
-CREATE INDEX IF NOT EXISTS idx_prep_ind_d ON preparation_indications(disease_id);
-CREATE INDEX IF NOT EXISTS idx_contra_plant ON contraindications(plant_id);
-CREATE INDEX IF NOT EXISTS idx_interact_plant ON interactions(plant_id);
-CREATE INDEX IF NOT EXISTS idx_conv_session ON conversations(session_id);
+/* No STAT tables available */

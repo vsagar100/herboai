@@ -113,12 +113,12 @@ FROM plants p JOIN diseases d
 ON p.botanical_name='Zingiber officinale' AND d.name_en='Indigestion';
 
 -- Preparations
-INSERT INTO preparations (name_en, name_hi, name_mr, classical_name, ayush_system_id, form_type, category, preparation_steps, duration, dosage_json, timing, anupana, notes)
+INSERT INTO preparations (name_en, name_hi, name_mr, classical_name, ayush_system, form_type, category, preparation_steps, duration, dosage_json, timing, anupana, notes)
 VALUES
-('Gudmar Decoction','गुड़मार का काढ़ा','गुड़मार काढा','Gudmar Kwatha',1,'decoction','single_herb','["Boil leaves in water","Reduce to 1/4","Filter"]','20 min','{"adult":"80-100 ml twice daily","child":"20-30 ml twice daily"}','after_food','water','Monitor glucose levels'),
-('Tulsi-Ginger Tea','तुलसी-अदरक चाय','तुलसी-आलं काढा',NULL,1,'decoction','compound','["Boil tulsi leaves and ginger","Simmer 5-7 min","Serve warm"]','10 min','{"adult":"150 ml 2-3x/day"}','after_food','honey (optional)','For common cold'),
-('Triphala Churna','त्रिफला चूर्ण','त्रिफळा चूर्ण',NULL,1,'powder','compound','["Dry fruits","Powder and sieve","Store airtight"]',NULL,'{"adult":"3-5 g with warm water at bedtime"}','empty_stomach','warm water','For indigestion & constipation'),
-('Arjuna Kwatha','अर्जुन का काढ़ा','अर्जुन काढा',NULL,1,'decoction','single_herb','["Boil bark pieces","Reduce to 1/4","Filter"]','20-25 min','{"adult":"80-100 ml twice daily"}','after_food','milk or water','For hypertension/cardiac support');
+('Gudmar Decoction','गुड़मार का काढ़ा','गुड़मार काढा','Gudmar Kwatha','Ayurveda','decoction','single_herb','["Boil leaves in water","Reduce to 1/4","Filter"]','20 min','{"adult":"80-100 ml twice daily","child":"20-30 ml twice daily"}','after_food','water','Monitor glucose levels'),
+('Tulsi-Ginger Tea','तुलसी-अदरक चाय','तुलसी-आलं काढा',NULL,'Ayurveda','decoction','compound','["Boil tulsi leaves and ginger","Simmer 5-7 min","Serve warm"]','10 min','{"adult":"150 ml 2-3x/day"}','after_food','honey (optional)','For common cold'),
+('Triphala Churna','त्रिफला चूर्ण','त्रिफळा चूर्ण',NULL,'Ayurveda','powder','compound','["Dry fruits","Powder and sieve","Store airtight"]',NULL,'{"adult":"3-5 g with warm water at bedtime"}','empty_stomach','warm water','For indigestion & constipation'),
+('Arjuna Kwatha','अर्जुन का काढ़ा','अर्जुन काढा',NULL,'Ayurveda','decoction','single_herb','["Boil bark pieces","Reduce to 1/4","Filter"]','20-25 min','{"adult":"80-100 ml twice daily"}','after_food','milk or water','For hypertension/cardiac support');
 
 -- Preparation ingredients linking
 INSERT INTO preparation_ingredients (preparation_id, plant_id, part, quantity_value, quantity_unit)

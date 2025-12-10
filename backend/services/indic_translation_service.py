@@ -122,14 +122,100 @@ class IndicTranslationService:
         return _walk(copy.deepcopy(payload))
 
     @staticmethod
-    def detect_lang(text: str) -> str:
-        if not text:
+    def detect_lang(text: str, lang_hint: str | None = None) -> str:
+        """
+        Robust, zero-dependency detector for en/hi/mr:
+        - Non-Devanagari -> 'en'
+        - Devanagari -> score Hindi vs Marathi using lexicons + morphology
+        - Optional `lang_hint` can steer decision if it matches script
+        Returns: 'en' | 'hi' | 'mr'
+        """
+        if not text or not text.strip():
             return "en"
-        devanagari = "\u0900-\u097F"
-        if any("\u0900" <= ch <= "\u097F" for ch in text):
-            mr_markers = {"कारण", "करा", "कृपा", "औषध", "मधुमेह"}
-            return "mr" if any(tok in text for tok in mr_markers) else "hi"
-        return "en"
+
+        # Normalize once
+        raw = text.strip()
+        # Light cleanup: remove leading stray punctuation that can appear from translation artifacts
+        cleaned = raw.lstrip(" .,:;|/\\-—–·*#\u200c\u200b")
+
+        # 0) Script probe
+        def has_devanagari(s: str) -> bool:
+            # Any Devanagari codepoint?
+            return any('\u0900' <= ch <= '\u097F' for ch in s)
+
+        if not has_devanagari(cleaned):
+            # Allow a trustworthy override (English UI may still tag mar/hi)
+            return "en"
+
+        # 1) If caller provided a hint and it matches the script, trust it
+        if lang_hint in {"hi", "mr"}:
+            return lang_hint
+
+        # 2) Tokenize (very light)
+        import re
+        toks = [t for t in re.split(r"[^\w\u0900-\u097F]+", cleaned) if t]
+
+        # 3) High-signal lexicons (curated, extensible)
+        #    NOTE: keep these *small but precise*. Add more as you see real data.
+        HINDI_ONLY = {
+            "बढ़ाने", "रोग", "प्रतिरोधक", "क्षमता", "आयुर्वेद", "उपाय", "क्या", "और", "में", "है", "नहीं",
+            "के", "लिए", "वाला", "वाले", "केंद्रित", "उत्पन्न", "रक्तचाप"
+        }
+        MARATHI_ONLY = {
+            "वाढवणारे", "रोग", "प्रतिकार", "शक्ती", "आयुर्वेद", "उपाय", "काय", "आणि", "मध्ये", "आहे", "नाही",
+            "किंवा", "होय", "औषध", "रक्तदाब", "उपयुक्त", "लक्षणे", "उपचार", "रोगप्रतिकारक", "त्रास", "कसा", 
+            "किती", "कुठे", "कोण", "केल्याने", "करा", "करावे", "करून", "मुळे", "प्रभावित", "मूळ", "संपूर्ण",
+            "काढा", "निर्मित", "सेंद्रिय"
+        }
+        # Words shared across both (neutral): ignore in scoring
+        NEUTRAL = {"रोग", "आयुर्वेद", "उपाय"}  # add as needed
+
+        # 4) Morphology & function-word patterns
+        #    Marathi: participial & infinitive patterns; Hindi: oblique/ko/me/vale/waale etc.
+        MR_SUFFIXES = ("णारा", "णारे", "ण्यात", "मध्ये", "करणे", "वाढ", "जास्त", "कमी", "पणा", "पणे")
+        HI_SUFFIXES = ("वाला", "वाले", "वाली", "बढ़", "करणा", "में", "को", "से", "की", "का", "के")
+
+        # 5) Score hits
+        hi_score = 0
+        mr_score = 0
+
+        for w in toks:
+            if w in NEUTRAL:
+                continue
+            if w in HINDI_ONLY:
+                hi_score += 2  # lexicon is high-signal
+            if w in MARATHI_ONLY:
+                mr_score += 2
+
+            # suffixes
+            if w.endswith(MR_SUFFIXES):
+                mr_score += 1
+            if w.endswith(HI_SUFFIXES):
+                hi_score += 1
+
+        # 6) Extra n-gram nudges (very short inputs benefit)
+        s = cleaned
+        if "प्रतिरोधक क्षमता" in s:
+            hi_score += 3
+        if "रोग प्रतिकार शक्ती" in s or "रोगप्रतिकारक शक्ती" in s or "वाढवणारे" in s:
+            mr_score += 3
+
+        # 7) Decide with confidence thresholds
+        #    - strong margin -> pick winner
+        #    - small margin with Marathi features present -> Marathi
+        #    - tie -> default to Hindi (more common nationally), except if Marathi-only cues exist
+        margin = mr_score - hi_score
+        if mr_score >= hi_score + 2:
+            return "mr"
+        if hi_score >= mr_score + 2:
+            return "hi"
+
+        # soft ties — check for Marathi “giveaways”
+        if any(g in s for g in ("वाढवणारे", "रोग प्रतिकार शक्ती", "रोगप्रतिकारक")):
+            return "mr"
+
+        # final tie-break: prefer Hindi
+        return "hi"
 
     def _select_route(
         self, src_lang: str, tgt_lang: str

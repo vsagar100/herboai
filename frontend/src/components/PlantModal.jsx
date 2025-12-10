@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X } from "lucide-react";
+import { X, ChevronDown } from "lucide-react";
 import axios from "axios";
 
 const api = axios.create({ baseURL: "/api" });
@@ -25,7 +25,8 @@ function tryJson(v, fallback=null) {
 
 export default function PlantModal({ open, plant, onClose }) {
   const [full, setFull] = useState(null);
-  const p = plant?._raw || plant;
+  const [expandedPrep, setExpandedPrep] = useState(null);
+  const rawCandidate = plant?._raw || null;
 
   useEffect(() => {
     let mounted = true;
@@ -42,16 +43,27 @@ export default function PlantModal({ open, plant, onClose }) {
     return () => { mounted = false; };
   }, [open, plant?.id]);
 
+  useEffect(() => {
+    if (!open) {
+      setExpandedPrep(null);
+    }
+  }, [open]);
+
   if (!open || !plant) return null;
 
-  // Use full details when available, fallback to passed object
-  const src = full || p;
+  const detailPayload = full || rawCandidate || null;
+  const src = (detailPayload && detailPayload.plant) || plant || {};
 
   const commonName = src.common_name_en || plant.name || "Herbal Plant";
   const sciName = src.botanical_name || plant.scientific_name || "";
   const family = src.family || src.category || null;
 
-  const heroCandidate = src.image_hero || src.image_url || plant.image_url || plant.images?.[0]?.path || null;
+  const heroCandidate =
+    src.image_hero ||
+    src.image_url ||
+    plant.image_url ||
+    plant.images?.[0]?.path ||
+    null;
   const image = resolveImageUrl(heroCandidate);
 
   const partsUsed = asArray(tryJson(src.parts_used, src.parts_used));
@@ -69,9 +81,10 @@ export default function PlantModal({ open, plant, onClose }) {
       ? Object.entries(doshaObj).map(([k, v]) => `${k}: ${v}`).join(", ")
       : (typeof doshaObj === "string" ? doshaObj : null);
 
-  const contraindications = asArray(src.contraindications);
-  const interactions = asArray(src.interactions);
-  const preparations = asArray(src.preparations);
+  const contraindications = asArray(detailPayload?.contraindications || src.contraindications);
+  const interactions = asArray(detailPayload?.interactions || src.interactions);
+  const preparations = asArray(detailPayload?.preparations || src.preparations);
+  const togglePrep = (id) => setExpandedPrep((prev) => (prev === id ? null : id));
 
   return (
     <AnimatePresence>
@@ -162,6 +175,94 @@ export default function PlantModal({ open, plant, onClose }) {
               </div>
             </div>
 
+            {preparations.length > 0 && (
+              <Block title="Signature Preparations" tone="highlight">
+                <div className="space-y-3">
+                  {preparations.map((prep, idx) => {
+                    const pid = prep.id || idx;
+                    const open = expandedPrep === pid;
+                    const steps = asArray(prep.preparation_steps);
+                    const equipment = asArray(prep.equipment_needed);
+                    const dosageRaw = tryJson(prep.dosage_json, prep.dosage_json);
+                    const dosageLines = [];
+                    if (typeof dosageRaw === "string") {
+                      dosageLines.push(dosageRaw);
+                    } else if (dosageRaw && typeof dosageRaw === "object") {
+                      if (dosageRaw.adult) dosageLines.push(`Adult: ${dosageRaw.adult}`);
+                      if (dosageRaw.child) dosageLines.push(`Child: ${dosageRaw.child}`);
+                    }
+                    return (
+                      <div key={pid} className="rounded-2xl border border-emerald-200 bg-white/90 shadow-sm overflow-hidden">
+                        <button
+                          onClick={() => togglePrep(pid)}
+                          className="w-full flex items-center justify-between gap-4 px-4 py-3 text-left"
+                        >
+                          <div className="min-w-0">
+                            <p className="font-semibold text-emerald-900 truncate">
+                              {prep.name_en || prep.name || "Preparation"}
+                            </p>
+                            <div className="text-xs text-gray-600 flex flex-wrap gap-2 mt-0.5">
+                              {prep.form_type && <Badge>{prep.form_type}</Badge>}
+                              {prep.timing && <span>Timing: {prep.timing}</span>}
+                              {prep.anupana && <span>Anupana: {prep.anupana}</span>}
+                            </div>
+                          </div>
+                          <motion.span animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.2 }}>
+                            <ChevronDown className="w-5 h-5 text-emerald-800" />
+                          </motion.span>
+                        </button>
+                        <AnimatePresence initial={false}>
+                          {open && (
+                            <motion.div
+                              initial={{ height: 0, opacity: 0 }}
+                              animate={{ height: "auto", opacity: 1 }}
+                              exit={{ height: 0, opacity: 0 }}
+                              transition={{ duration: 0.25 }}
+                              className="px-4 pb-4 space-y-3 text-sm text-gray-800"
+                            >
+                              {prep.description && (
+                                <p className="text-gray-700">{prep.description}</p>
+                              )}
+                              {dosageLines.length > 0 && (
+                                <div>
+                                  <p className="text-xs uppercase font-semibold text-gray-500 tracking-wide mb-1">
+                                    Dosage
+                                  </p>
+                                  <ul className="list-disc list-inside space-y-0.5">
+                                    {dosageLines.map((d, i) => <li key={i}>{d}</li>)}
+                                  </ul>
+                                </div>
+                              )}
+                              {equipment.length > 0 && (
+                                <div>
+                                  <p className="text-xs uppercase font-semibold text-gray-500 tracking-wide mb-1">
+                                    Equipment
+                                  </p>
+                                  <Chips items={equipment} />
+                                </div>
+                              )}
+                              {steps.length > 0 && (
+                                <div>
+                                  <p className="text-xs uppercase font-semibold text-gray-500 tracking-wide mb-1">
+                                    Steps
+                                  </p>
+                                  <ol className="list-decimal list-inside space-y-1">
+                                    {steps.map((s, i) => (
+                                      <li key={i}>{typeof s === "string" ? s : s?.instruction || ""}</li>
+                                    ))}
+                                  </ol>
+                                </div>
+                              )}
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Block>
+            )}
+
             {(properties.length > 0 || phytochemicals.length > 0) && (
               <div className="grid md:grid-cols-2 gap-4">
                 {properties.length > 0 && (
@@ -208,39 +309,6 @@ export default function PlantModal({ open, plant, onClose }) {
               </div>
             )}
 
-            {preparations.length > 0 && (
-              <Block title="Preparations & Dosage">
-                <div className="grid sm:grid-cols-2 gap-3">
-                  {preparations.map((prep, i) => {
-                    const dose = prep?.dosage_json && (typeof prep.dosage_json === "string"
-                      ? prep.dosage_json
-                      : JSON.stringify(prep.dosage_json));
-                    const steps = asArray(prep?.preparation_steps);
-                    return (
-                      <div key={i} className="rounded-lg border border-emerald-100 bg-white p-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="font-medium text-emerald-800">
-                            {prep.name_en || prep.name || "Preparation"}
-                          </p>
-                          {prep.form_type && <Badge>{prep.form_type}</Badge>}
-                        </div>
-                        {dose && <p className="text-xs mt-1 text-gray-700">Dosage: {dose}</p>}
-                        {prep.timing && <p className="text-xs text-gray-700">Timing: {prep.timing}</p>}
-                        {prep.anupana && <p className="text-xs text-gray-700">Anupana: {prep.anupana}</p>}
-                        {steps.length > 0 && (
-                          <details className="mt-2 text-xs">
-                            <summary className="cursor-pointer text-gray-600">Steps</summary>
-                            <ul className="list-disc list-inside mt-1 space-y-0.5">
-                              {steps.map((s, idx) => <li key={idx}>{s}</li>)}
-                            </ul>
-                          </details>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </Block>
-            )}
           </div>
         </motion.div>
       </motion.div>
@@ -269,19 +337,19 @@ function Chips({ items }) {
 }
 
 function Block({ title, children, tone = "neutral" }) {
+  const containerClass =
+    tone === "warn"
+      ? "rounded-xl p-4 bg-red-50/70 border border-red-200"
+      : tone === "highlight"
+        ? "rounded-2xl p-5 bg-emerald-50/80 border border-emerald-200 shadow-inner"
+        : "rounded-xl p-4 bg-white/70 border border-emerald-100";
+  const headingClass =
+    "text-xs font-semibold uppercase tracking-wide mb-2 " +
+    (tone === "warn" ? "text-red-700" : tone === "highlight" ? "text-emerald-700" : "text-gray-600");
   return (
-    <div className={
-      tone === "warn"
-        ? "rounded-xl p-4 bg-red-50/70 border border-red-200"
-        : "rounded-xl p-4 bg-white/70 border border-emerald-100"
-    }>
-      <p className={
-        "text-xs font-semibold uppercase tracking-wide mb-2 " +
-        (tone === "warn" ? "text-red-700" : "text-gray-600")
-      }>
-        {title}
-      </p>
-      <div className="text-sm text-gray-800 leading-relaxed">{children}</div>
+    <div className={containerClass}>
+      <p className={headingClass}>{title}</p>
+      <div className="text-sm text-gray-800 leading-relaxed space-y-2">{children}</div>
     </div>
   );
 }

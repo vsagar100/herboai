@@ -1,6 +1,7 @@
 # services/async_translator.py
 import queue
 import threading
+import time
 from typing import Dict, Optional
 
 from services.indic_translation_service import get_indic_translation_service
@@ -88,7 +89,7 @@ class AsyncTranslator:
         return self._ready.is_set()
 
     def translate_async(
-        self, text: str, lang: str, timeout: int = 300, warm_timeout: int = 5
+        self, text: str, lang: str, timeout: int = 3000, warm_timeout: int = 5
     ) -> Optional[str]:
         """
         Non-blocking translation with timeout. If the model is still warming
@@ -97,9 +98,13 @@ class AsyncTranslator:
         if lang == "en":
             return text
 
+        start = time.time()
         if not self._ensure_ready():
+            wait_start = time.time()
             # Give the loader a brief chance before bailing out
             self._ready.wait(timeout=warm_timeout)
+            wait_time = time.time() - wait_start
+            print(f"[AsyncTranslator] Waited {wait_time:.2f}s for model")
             if not self._ready.is_set():
                 print("[AsyncTranslator] Translator not ready; responding in English")
                 return None
@@ -107,8 +112,13 @@ class AsyncTranslator:
         result_queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
         self.request_queue.put((text, lang, result_queue))
 
+        queue_start = time.time()
         try:
             status, result = result_queue.get(timeout=timeout)
+            queue_time = time.time() - queue_start
+            total_time = time.time() - start
+            print(f"[AsyncTranslator] Queue time: {queue_time:.2f}s, Total: {total_time:.2f}s")
+
             if status == "success":
                 return result
             print(f"[AsyncTranslator] Error: {result}")

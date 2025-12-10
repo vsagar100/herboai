@@ -317,7 +317,6 @@ function PlantFormModal({ open, initial, onClose, onSaved }) {
       id, 
       created_at, 
       updated_at, 
-      ayush_system_id,
       ...cleanData 
     } = form;
     
