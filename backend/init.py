@@ -43,7 +43,7 @@ def preload_models():
             
             # 3. Test translation to ensure it works
             try:
-                test_result = async_tx.translate_async("Hello", "hi", timeout=10)
+                test_result = async_tx.translate_async("Hello", "mr", timeout=10)
                 if test_result:
                     print(f"[Startup] ✓ Translation test passed: {test_result}")
                 else:

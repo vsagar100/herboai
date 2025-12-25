@@ -15,7 +15,7 @@ class IndicTranslator:
         model_map = {
             "en-indic": "ai4bharat/indictrans2-en-indic-dist-200M",
             "indic-en": "ai4bharat/indictrans2-indic-en-dist-200M",
-            "indic-indic": "ai4bharat/indictrans2-indic-indic-dist-320M",
+          #  "indic-indic": "ai4bharat/indictrans2-indic-indic-dist-320M",
         }
         
         model_name = model_map[direction]
@@ -104,107 +104,12 @@ class IndicTranslator:
         # Return single string if input was single string
         return translations[0] if single_input else translations
 
-
-# Example usage
-if __name__ == "__main__":
-    # Initialize translator for English to Indic languages
-    print("Initializing translator...")
-    translator = IndicTranslator(direction="en-indic")
-    print()
-    
-    # Example 1: Single sentence translation (English to Hindi)
-    print("=" * 60)
-    print("Example 1: English to Hindi")
-    print("=" * 60)
-    english_text = "Hello, how are you?"
-    hindi_translation = translator.translate(
-        sentences=english_text,
-        src_lang="eng_Latn",
-        tgt_lang="hin_Deva"
-    )
-    print(f"English: {english_text}")
-    print(f"Hindi: {hindi_translation}")
-    print()
-    
-    # Example 2: English to Marathi
-    print("=" * 60)
-    print("Example 2: English to Marathi")
-    print("=" * 60)
-    english_text = "Thank you for your help."
-    marathi_translation = translator.translate(
-        sentences=english_text,
-        src_lang="eng_Latn",
-        tgt_lang="mar_Deva"
-    )
-    print(f"English: {english_text}")
-    print(f"Marathi: {marathi_translation}")
-    print()
-    
-    # Example 3: Batch translation (English to Tamil)
-    print("=" * 60)
-    print("Example 3: Batch Translation (English to Tamil)")
-    print("=" * 60)
-    texts = [
-        "Good morning",
-        "What is your name?",
-        "I am learning Indian languages"
-    ]
-    
-    tamil_translations = translator.translate(
-        sentences=texts,
-        src_lang="eng_Latn",
-        tgt_lang="tam_Taml"
-    )
-    
-    for eng, tam in zip(texts, tamil_translations):
-        print(f"  EN: {eng}")
-        print(f"  TA: {tam}")
-        print()
-    
-    # Example 4: English to multiple languages
-    print("=" * 60)
-    print("Example 4: One sentence to multiple languages")
-    print("=" * 60)
-    text = "Welcome to India"
-    languages = [
-        ("hin_Deva", "Hindi"),
-        ("guj_Gujr", "Gujarati"),
-        ("tel_Telu", "Telugu"),
-        ("kan_Knda", "Kannada")
-    ]
-    
-    print(f"English: {text}\n")
-    for lang_code, lang_name in languages:
-        translation = translator.translate(text, "eng_Latn", lang_code)
-        print(f"{lang_name:12s}: {translation}")
-    
-    # Example 5: Longer text
-    print()
-    print("=" * 60)
-    print("Example 5: Longer text (English to Hindi)")
-    print("=" * 60)
-    long_text = "India is a diverse country with many languages and cultures. The people are very friendly and welcoming."
-    hindi_long = translator.translate(long_text, "eng_Latn", "hin_Deva")
-    print(f"English: {long_text}")
-    print(f"Hindi: {hindi_long}")
-
-
 # Language code reference
 LANGUAGE_CODES = {
     # Language name: (code, script)
     "english": "eng_Latn",
     "hindi": "hin_Deva",
-    "bengali": "ben_Beng",
-    "gujarati": "guj_Gujr",
-    "marathi": "mar_Deva",
-    "tamil": "tam_Taml",
-    "telugu": "tel_Telu",
-    "kannada": "kan_Knda",
-    "malayalam": "mal_Mlym",
-    "punjabi": "pan_Guru",
-    "odia": "ory_Orya",
-    "assamese": "asm_Beng",
-    "sanskrit": "san_Deva"
+    "marathi": "mar_Deva"
 }
 
 # Function to list all supported languages

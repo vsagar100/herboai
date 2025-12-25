@@ -7,6 +7,10 @@ import HomePage from "./pages/HomePage";
 import PlantLibrary from "./pages/PlantLibrary";
 import ChatInterface from "./pages/ChatInterface";
 import AdminPanel from "./pages/AdminPanel";
+import Contact from "./pages/Contact";
+import Disclaimer from "./pages/Disclaimer";
+import Privacy from "./pages/Privacy";
+import Terms from "./pages/Terms";
 
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "http://localhost:5000";
 
@@ -40,6 +44,10 @@ export default function App() {
           <Route path="/library" element={<PlantLibrary />} />
           <Route path="/chat" element={<ChatInterface />} />
           <Route path="/admin" element={<AdminPanel />} />
+          <Route path="/contact" element={<Contact />} />
+          <Route path="/disclaimer" element={<Disclaimer />} />
+          <Route path="/privacy" element={<Privacy />} />
+          <Route path="/terms" element={<Terms />} />
         </Routes>
       </AppShell>
     </Router>

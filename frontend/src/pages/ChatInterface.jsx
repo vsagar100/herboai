@@ -315,13 +315,16 @@ export default function ChatInterface() {
       let responseText = answer;
       let relatedPlants = plants.map(normalizePlant);
 
-      if (intent === "plant_info" && onePlant) {
-        const np = normalizePlant(onePlant);
-        relatedPlants = [np];
-        responseText = `**${np.name}**${np.scientific_name ? ` (_${np.scientific_name}_)` : ""}\n\n${np.description || ""}`;
-        if (np.actions?.length) responseText += `\n\n**Actions:** ${np.actions.join(", ")}`;
-        if (np.parts_used?.length) responseText += `\n**Parts Used:** ${np.parts_used.join(", ")}`;
-      }
+     if (!relatedPlants.length && onePlant) {
+      relatedPlants = [normalizePlant(onePlant)];
+     }
+      // if (intent === "plant_info" && onePlant) {
+      //   const np = normalizePlant(onePlant);
+      //   relatedPlants = [np];
+      //   responseText = `**${np.name}**${np.scientific_name ? ` (_${np.scientific_name}_)` : ""}\n\n${np.description || ""}`;
+      //   if (np.actions?.length) responseText += `\n\n**Actions:** ${np.actions.join(", ")}`;
+      //   if (np.parts_used?.length) responseText += `\n**Parts Used:** ${np.parts_used.join(", ")}`;
+      // }
 
       const aiMsg = {
         id: userMsg.id + 1,

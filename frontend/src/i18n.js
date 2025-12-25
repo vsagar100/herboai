@@ -74,10 +74,41 @@ export const translations = {
       terms: "Terms of Service",
       contact: "Contact Us",
     },
+    contactPage: {
+      subtitle: "Reach out for questions, feedback, or academic collaboration.",
+      intro:
+        "We are happy to hear from students, faculty, and researchers using HerboAI. Please include your institution and a short description of your request so we can route it quickly.",
+      emailLabel: "Email",
+      responseTimeLabel: "Response Time",
+      responseTimeValue: "Typically within 2-3 business days.",
+      campusLabel: "Campus",
+      campusValue: "Sandip Engineering, Nashik.",
+    },
+    privacyPage: {
+      subtitle: "A short summary of how this demo handles information.",
+      p1:
+        "This academic project is intended for learning and demonstration. The data shown inside HerboAI is stored by the project operators in a local database for coursework purposes.",
+      p2:
+        "Please avoid sharing sensitive personal information in the chat or admin areas. If you are running your own instance, you control the database and are responsible for protecting it.",
+      p3:
+        "If you have questions about how data is stored or used, contact the project team for details.",
+    },
+    termsPage: {
+      subtitle: "Basic usage expectations for this academic demo.",
+      p1:
+        "HerboAI is an academic project provided for educational use only. By using this application, you acknowledge that the content is not medical advice and is offered without warranties.",
+      p2:
+        "You agree not to use the service for unlawful activities or to submit content that is harmful, misleading, or violates the rights of others.",
+      p3:
+        "The project team may update content, features, or availability without notice as part of ongoing development.",
+    },
     disclaimer: {
+      subtitle: "Academic project information only.",
       title: "Important Medical Disclaimer",
       content:
         "This application is developed solely for academic and educational purposes. Information provided about medicinal plants and remedies should not be taken as medical advice. Always consult a qualified healthcare practitioner.",
+      extra:
+        "HerboAI is not a substitute for professional medical diagnosis or treatment. Do not ignore or delay seeking medical advice based on information provided by this application.",
     },
   },
 
@@ -155,15 +186,46 @@ export const translations = {
       terms: "सेवा की शर्तें",
       contact: "संपर्क करें",
     },
+    contactPage: {
+      subtitle: "प्रश्नों, प्रतिक्रिया या शैक्षणिक सहयोग के लिए संपर्क करें।",
+      intro:
+        "हमें HerboAI का उपयोग करने वाले छात्रों, शिक्षकों और शोधकर्ताओं से सुनकर खुशी होगी। कृपया अपने संस्थान का नाम और अपने अनुरोध का संक्षिप्त विवरण शामिल करें।",
+      emailLabel: "ईमेल",
+      responseTimeLabel: "प्रतिक्रिया समय",
+      responseTimeValue: "आमतौर पर 2-3 कार्य दिवसों के भीतर।",
+      campusLabel: "कैंपस",
+      campusValue: "संदीप इंजीनियरिंग, नासिक।",
+    },
+    privacyPage: {
+      subtitle: "यह डेमो जानकारी को कैसे प्रबंधित करता है, इसका संक्षिप्त सारांश।",
+      p1:
+        "यह शैक्षणिक परियोजना सीखने और प्रदर्शन के उद्देश्य से है। HerboAI के भीतर दिखाया गया डेटा प्रोजेक्ट ऑपरेटरों द्वारा स्थानीय डेटाबेस में संग्रहीत किया जाता है।",
+      p2:
+        "कृपया चैट या एडमिन क्षेत्रों में संवेदनशील व्यक्तिगत जानकारी साझा करने से बचें। यदि आप अपना स्वयं का इंस्टेंस चला रहे हैं, तो आप डेटाबेस को नियंत्रित करते हैं।",
+      p3:
+        "यदि आपके पास डेटा कैसे संग्रहीत या उपयोग किया जाता है, इसके बारे में प्रश्न हैं, तो विवरण के लिए प्रोजेक्ट टीम से संपर्क करें।",
+    },
+    termsPage: {
+      subtitle: "इस शैक्षणिक डेमो के लिए बुनियादी उपयोग की शर्तें।",
+      p1:
+        "HerboAI केवल शैक्षिक उपयोग के लिए प्रदान की गई एक शैक्षणिक परियोजना है। इस एप्लिकेशन का उपयोग करके, आप स्वीकार करते हैं कि सामग्री चिकित्सा सलाह नहीं है।",
+      p2:
+        "आप अवैध गतिविधियों के लिए सेवा का उपयोग नहीं करने या ऐसी सामग्री सबमिट नहीं करने के लिए सहमत हैं जो हानिकारक या भ्रामक हो।",
+      p3:
+        "प्रोजेक्ट टीम चल रहे विकास के हिस्से के रूप में बिना किसी सूचना के सामग्री, सुविधाओं या उपलब्धता को अपडेट कर सकती है।",
+    },
     disclaimer: {
+      subtitle: "केवल शैक्षणिक परियोजना की जानकारी।",
       title: "महत्वपूर्ण चिकित्सा अस्वीकरण",
       content:
-        "यह अप्प्लिकेशन शैक्षणिक उद्देश्य के लिए है। यहां दी गई जानकारी को चिकित्सीय सलाह के रूप में न लें। हमेशा योग्य डॉक्टर से परामर्श करें।",
+        "यह एप्लिकेशन विशेष रूप से शैक्षणिक और शैक्षिक उद्देश्यों के लिए विकसित किया गया है। औषधीय पौधों और उपचारों के बारे में दी गई जानकारी को चिकित्सा सलाह के रूप में नहीं लिया जाना चाहिए।",
+      extra:
+        "HerboAI पेशेवर चिकित्सा निदान या उपचार का विकल्प नहीं है। इस एप्लिकेशन द्वारा प्रदान की गई जानकारी के आधार पर चिकित्सा सलाह की उपेक्षा न करें।",
     },
   },
 
   mr: {
-    title: "हर्बो AI",
+    title: "हर्बोAI",
     subtitle: "तुमचा AI-चालित हर्बल सहाय्यक",
     nav: {
       home: "होम",
@@ -236,10 +298,41 @@ export const translations = {
       terms: "सेवा अटी",
       contact: "संपर्क करा",
     },
+    contactPage: {
+      subtitle: "प्रश्न, अभिप्राय किंवा शैक्षणिक सहकार्यासाठी संपर्क साधा.",
+      intro:
+        "HerboAI वापरणाऱ्या विद्यार्थ्यांकडून, शिक्षकांकडून आणि संशोधकांकडून ऐकून आम्हाला आनंद होईल. कृपया तुमच्या संस्थेचे नाव आणि विनंतीचे थोडक्यात वर्णन जोडा.",
+      emailLabel: "ईमेल",
+      responseTimeLabel: "प्रतिसाद वेळ",
+      responseTimeValue: "साधारणपणे २-३ कार्यालयीन दिवसांत.",
+      campusLabel: "कॅम्पस",
+      campusValue: "संदीप इंजिनिअरिंग, नाशिक.",
+    },
+    privacyPage: {
+      subtitle: "हे डेमो माहिती कशी हाताळते याचा थोडक्यात सारांश.",
+      p1:
+        "हा शैक्षणिक प्रकल्प शिकण्याच्या आणि सादरीकरणाच्या उद्देशाने आहे. HerboAI मध्ये दिसणारा डेटा स्थानिक डेटाबेसमध्ये संग्रहित केला जातो.",
+      p2:
+        "कृपया चॅट किंवा ॲडमिन भागात संवेदनशील वैयक्तिक माहिती शेअर करणे टाळा. जर तुम्ही तुमची स्वतःची आवृत्ती चालवत असाल, तर तुम्ही डेटाबेस नियंत्रित करता.",
+      p3:
+        "डेटा कसा संग्रहित किंवा वापरला जातो याबद्दल काही प्रश्न असल्यास, तपशीलांसाठी प्रकल्प टीमशी संपर्क साधा.",
+    },
+    termsPage: {
+      subtitle: "या शैक्षणिक डेमोसाठी मूलभूत वापराच्या अटी.",
+      p1:
+        "HerboAI हा केवळ शैक्षणिक वापरासाठी दिलेला प्रकल्प आहे. या ॲप्लिकेशनचा वापर करून, तुम्ही मान्य करता की ही सामग्री वैद्यकीय सल्ला नाही.",
+      p2:
+        "तुम्ही बेकायदेशीर क्रियाकलापांसाठी सेवेचा वापर न करण्यास किंवा हानिकारक किंवा दिशाभूल करणारी सामग्री सबमिट न करण्यास सहमत आहात.",
+      p3:
+        "प्रकल्प टीम चालू विकासाचा भाग म्हणून पूर्वसूचनेशिवाय सामग्री, वैशिष्ट्ये किंवा उपलब्धता अपडेट करू शकते.",
+    },
     disclaimer: {
+      subtitle: "केवळ शैक्षणिक प्रकल्पाची माहिती.",
       title: "महत्वाचे वैद्यकीय अस्वीकरण",
       content:
-        "हे अप्प्लिकेशन शैक्षणिक हेतूसाठी विकसित केले गेले आहे. दिलेली माहिती वैद्यकीय सल्ला म्हणून घेऊ नका. नेहमी पात्र डॉक्टरांचा सल्ला घ्या.",
+        "हे ॲप्लिकेशन केवळ शैक्षणिक हेतूसाठी विकसित केले गेले आहे. औषधी वनस्पती आणि उपचारांबद्दल दिलेली माहिती वैद्यकीय सल्ला म्हणून घेऊ नका.",
+      extra:
+        "HerboAI हे व्यावसायिक वैद्यकीय निदानासाठी पर्याय नाही. या ॲप्लिकेशनद्वारे दिलेल्या माहितीच्या आधारे वैद्यकीय सल्ला घेण्यास उशीर करू नका.",
     },
   },
 };

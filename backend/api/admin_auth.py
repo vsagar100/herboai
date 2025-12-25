@@ -80,7 +80,7 @@ def admin_me():
         "SELECT id, username FROM admin_users WHERE username = ?", 
         (username,)
     ).fetchone()
-    
+
     if not user:
         return jsonify({"error": "User not found"}), 404
     

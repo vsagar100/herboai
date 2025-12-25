@@ -1,0 +1,1529 @@
+--select id, common_name_en from plants order by id;
+1|Brahmi
+2|Gotu Kola
+3|Giloy
+4|Neem
+5|Arjuna
+6|Gokshura
+7|Punarnava
+8|Shatavari
+9|Licorice
+10|Kalmegh
+11|Bael
+12|Guggul
+13|Bhumyamalaki
+14|Kutki
+15|Long Pepper
+16|Black Pepper
+17|Vidanga
+18|Chitrak
+19|Jatamansi
+20|Kustha
+21|Malabar Nut
+22|Saptaparna
+23|Mustaka
+24|Atibala
+25|Bala
+26|Kantakari
+27|Brihati
+28|Asthisamharaka
+29|Vijayasar
+30|Manjishta
+31|Golden Shower Tree
+32|Kutaja
+33|Kokilaksha
+34|Noni
+35|Apamarga
+36|Red Sandalwood
+37|Patha
+38|Shati
+39|Daruharidra
+40|Chirayata
+41|Galangal
+42|Nagarmotha (Scariosus)
+43|Talispatra
+44|Pushkarmoola
+45|Black Nightshade
+46|Vidarikand
+47|Karkatashringi
+48|Kalijiri
+49|Indian Sarsaparilla
+50|Vriddhadaru
+51|Pashanbhed
+52|Mango
+53|Bakuchi
+54|Sweet Flag
+55|Betel Leaf
+56|Indian Bay Leaf
+57|Hibiscus
+58|Mexican Poppy
+59|Arka
+60|Datura
+61|Erect Boerhavia
+62|Bhringraj
+63|Ram Tulsi
+64|Sweet Basil
+65|Field Mint
+66|Peppermint
+67|Dill
+68|Garlic
+69|Onion
+70|Jamun
+71|Ashwagandha
+72|Shankhpushpi
+73|Indian Coleus
+74|Indian Frankincense
+75|Drumstick Tree
+76|Pomegranate
+77|Lemon
+78|Holy Fig
+79|Banyan Tree
+80|Coconut
+81|Nutmeg
+82|Saffron
+83|Black Cardamom
+84|Star Anise
+85|Grapes
+86|Dates
+87|Black Cumin
+88|Garden Cress
+89|Cutch Tree
+90|Vetiver
+91|Safed Musli
+92|Shilajit
+93|Kapikacchu
+95|Ashoka Tree
+97|Balloon Vine
+99|Mahua
+100|Arjuna Flower
+101|Sal Tree
+102|Takra Herb Base
+103|Barley
+104|Mango Leaf
+105|Licorice Soft Root
+106|Palash
+107|Indian Bay Leaf (Tejpatra)
+108|Gudmar
+109|Tagara
+110|Asafoetida
+111|Indian Mustard
+112|Indian Senna
+113|Pointed Gourd
+114|Bitter Gourd
+115|Bottle Gourd
+116|Ridge Gourd
+117|Castor
+118|Indian Beech
+119|Henna
+120|Guava
+121|Papaya
+122|Indian Jujube
+123|Mulberry
+124|Camphor Tree
+125|Indian Borage
+127|Climbing Brinjal
+128|Indian Gooseberry
+129|Haritaki
+130|Bibhitaki
+131|Turmeric
+132|Ginger
+133|Coriander
+134|Cumin
+135|Fennel
+136|Ajwain
+137|Fenugreek
+138|Green Cardamom
+139|Clove
+140|Cinnamon
+141|Curry Leaf
+142|Sacred Lotus
+143|Rose
+144|Aloe Vera
+145|Sesame
+146|Flaxseed
+204|Walnut
+205|Pumpkin Seed
+206|Muskmelon
+213|Arnica
+214|Aconite
+215|Belladonna
+216|Bryonia
+217|Rhus Tox
+218|Nux Vomica
+219|Pulsatilla
+220|Chamomilla
+221|Gelsemium
+222|Ignatia
+223|Hypericum
+224|Calendula
+225|Ruta
+226|Ledum
+227|Eupatorium perfoliatum
+228|Ferrum Phos
+229|Kali Bichrom
+230|Natrum Mur
+231|Sulphur
+232|Hepar Sulph
+233|Lycopodium
+234|Sepia
+235|Silicea
+236|Arsenicum Album
+237|Carbo Veg
+238|Jivanti
+239|Kovidara_Vine
+240|Prishniparni_(South)
+241|Punarnava_(Repens)
+242|Danti
+243|Trivrit
+244|Musta_Rhizome
+245|Deodar
+246|Blue_Water_Lily
+247|Lotus_Stamen
+248|Parpata
+249|Guduchi_(Sinensis)
+250|Mahabala
+251|Kali_Musli
+252|Guduchi_(Crispa)
+253|Licorice_Seed
+254|Priyangu
+255|Piloo
+256|Tejphal
+257|Anantamoola_(South)
+258|Bael_Leaf
+259|White_Sandalwood
+260|Amla_Seed
+261|Patha_Root
+262|Nirmali
+263|Babul
+264|Yarrow
+266|Gorakshaganja
+267|Aloe Vera
+268|Bloodflower
+270|Bamboo
+273|Psyllium
+274|Damask Rose
+275|Chicory
+283|Agnimantha
+284|Shyonaka
+285|Patala
+286|Gambhari
+287|Shalaparni
+288|Prishniparni
+289|Rasna
+290|Lodhra
+291|Nagakesara
+292|Ativisha
+293|Bhallataka
+294|Bharangi
+295|Varuna
+353|Sharpunkha
+355|Kanchanara
+
+--select id, name_en from diseases order by id;
+1|Anxiety and Stress
+2|Memory Weakness
+3|Recurrent Fever
+4|Chronic Liver Disorder
+5|Chronic Skin Disease
+6|Ischemic Heart Disease
+7|Urinary Stones
+8|Menstrual Irregularity
+9|Gastric Ulcer and Hyperacidity
+10|Intestinal Worm Infestation
+11|Bronchial Asthma
+12|Chronic Cough and Bronchitis
+13|Osteoporosis and Bone Weakness
+14|Diabetes Mellitus Type 2
+15|Obesity
+16|Jaundice
+17|Diarrhea and IBS
+18|Neuromuscular Weakness
+19|Anxiety and Stress
+20|Memory Weakness
+21|Recurrent Fever
+22|Chronic Liver Disorder
+23|Chronic Skin Disease
+24|Ischemic Heart Disease
+25|Urinary Stones
+26|Menstrual Irregularity
+27|Gastric Ulcer and Hyperacidity
+28|Intestinal Worm Infestation
+29|Bronchial Asthma
+30|Chronic Cough and Bronchitis
+31|Osteoporosis and Bone Weakness
+32|Diabetes Mellitus Type 2
+33|Obesity
+34|Jaundice
+35|Diarrhea and IBS
+36|Neuromuscular Weakness
+37|Anxiety and Stress
+38|Memory Weakness
+39|Recurrent Fever
+40|Chronic Liver Disorder
+41|Chronic Skin Disease
+42|Ischemic Heart Disease
+43|Urinary Stones
+44|Menstrual Irregularity
+45|Gastric Ulcer and Hyperacidity
+46|Intestinal Worm Infestation
+47|Bronchial Asthma
+48|Chronic Cough and Bronchitis
+49|Osteoporosis and Bone Weakness
+50|Diabetes Mellitus Type 2
+51|Obesity
+52|Jaundice
+53|Diarrhea and IBS
+54|Neuromuscular Weakness
+55|Anxiety and Stress
+56|Memory Weakness
+57|Recurrent Fever
+58|Chronic Liver Disorder
+59|Chronic Skin Disease
+60|Ischemic Heart Disease
+61|Urinary Stones
+62|Menstrual Irregularity
+63|Gastric Ulcer and Hyperacidity
+64|Intestinal Worm Infestation
+65|Bronchial Asthma
+66|Chronic Cough and Bronchitis
+67|Osteoporosis and Bone Weakness
+68|Diabetes Mellitus Type 2
+69|Obesity
+70|Jaundice
+71|Diarrhea and IBS
+72|Neuromuscular Weakness
+73|Anxiety and Stress
+74|Memory Weakness
+75|Recurrent Fever
+76|Chronic Liver Disorder
+77|Chronic Skin Disease
+78|Ischemic Heart Disease
+79|Urinary Stones
+80|Menstrual Irregularity
+81|Gastric Ulcer and Hyperacidity
+82|Intestinal Worm Infestation
+83|Bronchial Asthma
+84|Chronic Cough and Bronchitis
+85|Osteoporosis and Bone Weakness
+86|Diabetes Mellitus Type 2
+87|Obesity
+88|Jaundice
+89|Diarrhea and IBS
+90|Neuromuscular Weakness
+91|Anxiety and Stress
+92|Memory Weakness
+93|Recurrent Fever
+94|Chronic Liver Disorder
+95|Chronic Skin Disease
+96|Ischemic Heart Disease
+97|Urinary Stones
+98|Menstrual Irregularity
+99|Gastric Ulcer and Hyperacidity
+100|Intestinal Worm Infestation
+101|Bronchial Asthma
+102|Chronic Cough and Bronchitis
+103|Osteoporosis and Bone Weakness
+104|Diabetes Mellitus Type 2
+105|Obesity
+106|Jaundice
+107|Diarrhea and IBS
+108|Neuromuscular Weakness
+109|Anxiety and Stress
+110|Memory Weakness
+111|Recurrent Fever
+112|Chronic Liver Disorder
+113|Chronic Skin Disease
+114|Ischemic Heart Disease
+115|Urinary Stones
+116|Menstrual Irregularity
+117|Gastric Ulcer and Hyperacidity
+118|Intestinal Worm Infestation
+119|Bronchial Asthma
+120|Chronic Cough and Bronchitis
+121|Osteoporosis and Bone Weakness
+122|Diabetes Mellitus Type 2
+123|Obesity
+124|Jaundice
+125|Diarrhea and IBS
+126|Neuromuscular Weakness
+127|Anxiety and Stress
+128|Memory Weakness
+129|Recurrent Fever
+130|Chronic Liver Disorder
+131|Chronic Skin Disease
+132|Ischemic Heart Disease
+133|Urinary Stones
+134|Menstrual Irregularity
+135|Gastric Ulcer and Hyperacidity
+136|Intestinal Worm Infestation
+137|Bronchial Asthma
+138|Chronic Cough and Bronchitis
+139|Osteoporosis and Bone Weakness
+140|Diabetes Mellitus Type 2
+141|Obesity
+142|Jaundice
+143|Diarrhea and IBS
+144|Neuromuscular Weakness
+145|Homeopathic Bruise and Soft Tissue Injury
+146|Homeopathic Acute Shock and Fear Reaction
+147|Homeopathic High Fever with Throbbing Headache
+148|Homeopathic Dry Painful Cough and Chest Pain
+149|Homeopathic Joint Sprain and Stiffness
+150|Homeopathic Indigestion from Overeating and Stimulants
+151|Homeopathic Acute Grief and Emotional Upset
+152|Homeopathic Nerve Injury and Shooting Pain
+153|Homeopathic Local Wound and Slow Healing
+154|Homeopathic Chronic Sinus Catarrh
+155|Homeopathic Chronic Skin Eruption and Itching
+156|Homeopathic Low-grade Fever and Inflammatory Tendency
+157|Constipation
+158|Hemorrhoids (Piles)
+159|Dyslipidemia (High Cholesterol)
+160|Hypertension
+161|Osteoarthritis / Joint Degeneration
+162|Anemia (Iron Deficiency Pattern)
+163|Fatty Liver (NAFLD Pattern)
+164|Allergic Rhinitis
+165|Insomnia / Sleep Disturbance
+166|Migraine / Recurrent Headache
+
+--select id,plant_id,disease_id from plant_disease_mapping order by id;
+1|1|1
+2|2|1
+3|1|2
+4|2|2
+5|3|3
+6|10|3
+7|3|4
+8|7|4
+9|4|5
+10|5|6
+11|6|7
+12|8|8
+13|9|9
+14|11|9
+15|12|6
+16|13|4
+17|14|4
+18|15|9
+19|16|9
+20|19|1
+21|19|2
+22|20|5
+23|21|3
+24|22|3
+25|23|9
+26|24|1
+27|25|1
+28|29|4
+29|30|5
+30|17|10
+31|26|11
+32|27|11
+33|21|12
+34|28|13
+35|29|14
+36|29|15
+37|23|17
+38|24|18
+39|25|18
+40|14|16
+41|13|16
+42|31|5
+43|32|17
+44|35|10
+45|35|5
+46|36|5
+47|37|17
+48|38|11
+49|38|12
+50|39|5
+51|39|4
+52|39|16
+53|40|3
+54|40|4
+55|40|16
+56|41|11
+57|41|12
+58|42|17
+59|43|11
+60|43|12
+61|44|6
+62|45|4
+63|46|14
+64|48|10
+65|48|5
+66|49|5
+67|49|16
+68|50|18
+69|51|7
+70|53|5
+71|54|1
+72|54|2
+73|54|12
+74|57|8
+75|58|5
+76|59|5
+77|60|11
+78|62|4
+79|62|5
+80|63|12
+81|63|11
+82|65|17
+83|66|17
+84|67|17
+85|68|6
+86|68|14
+87|68|15
+88|69|14
+89|69|6
+90|70|14
+91|70|17
+92|70|32
+93|70|50
+94|70|68
+95|70|86
+96|70|104
+97|70|122
+98|70|140
+99|70|35
+100|70|53
+101|70|71
+102|70|89
+103|70|107
+104|70|125
+105|70|143
+106|91|18
+107|91|36
+108|91|54
+109|91|72
+110|91|90
+111|91|108
+112|91|126
+113|91|144
+114|91|13
+115|91|31
+116|91|49
+117|91|67
+118|91|85
+119|91|103
+120|91|121
+121|91|139
+122|92|14
+123|92|32
+124|92|50
+125|92|68
+126|92|86
+127|92|104
+128|92|122
+129|92|140
+130|92|15
+131|92|33
+132|92|51
+133|92|69
+134|92|87
+135|92|105
+136|92|123
+137|92|141
+138|92|18
+139|92|36
+140|92|54
+141|92|72
+142|92|90
+143|92|108
+144|92|126
+145|92|144
+146|93|18
+147|93|36
+148|93|54
+149|93|72
+150|93|90
+151|93|108
+152|93|126
+153|93|144
+154|93|2
+155|93|20
+156|93|38
+157|93|56
+158|93|74
+159|93|92
+160|93|110
+161|93|128
+162|95|8
+163|95|26
+164|95|44
+165|95|62
+166|95|80
+167|95|98
+168|95|116
+169|95|134
+170|76|9
+171|76|27
+172|76|45
+173|76|63
+174|76|81
+175|76|99
+176|76|117
+177|76|135
+178|76|6
+179|76|24
+180|76|42
+181|76|60
+182|76|78
+183|76|96
+184|76|114
+185|76|132
+186|97|13
+187|97|31
+188|97|49
+189|97|67
+190|97|85
+191|97|103
+192|97|121
+193|97|139
+194|97|18
+195|97|36
+196|97|54
+197|97|72
+198|97|90
+199|97|108
+200|97|126
+201|97|144
+202|99|18
+203|99|36
+204|99|54
+205|99|72
+206|99|90
+207|99|108
+208|99|126
+209|99|144
+210|99|13
+211|99|31
+212|99|49
+213|99|67
+214|99|85
+215|99|103
+216|99|121
+217|99|139
+218|100|6
+219|100|24
+220|100|42
+221|100|60
+222|100|78
+223|100|96
+224|100|114
+225|100|132
+226|101|5
+227|101|23
+228|101|41
+229|101|59
+230|101|77
+231|101|95
+232|101|113
+233|101|131
+234|102|17
+235|102|35
+236|102|53
+237|102|71
+238|102|89
+239|102|107
+240|102|125
+241|102|143
+242|102|9
+243|102|27
+244|102|45
+245|102|63
+246|102|81
+247|102|99
+248|102|117
+249|102|135
+250|103|14
+251|103|32
+252|103|50
+253|103|68
+254|103|86
+255|103|104
+256|103|122
+257|103|140
+258|103|15
+259|103|33
+260|103|51
+261|103|69
+262|103|87
+263|103|105
+264|103|123
+265|103|141
+266|103|7
+267|103|25
+268|103|43
+269|103|61
+270|103|79
+271|103|97
+272|103|115
+273|103|133
+274|49|23
+275|49|41
+276|49|59
+277|49|77
+278|49|95
+279|49|113
+280|49|131
+281|104|14
+282|104|32
+283|104|50
+284|104|68
+285|104|86
+286|104|104
+287|104|122
+288|104|140
+289|104|11
+290|104|29
+291|104|47
+292|104|65
+293|104|83
+294|104|101
+295|104|119
+296|104|137
+297|105|9
+298|105|27
+299|105|45
+300|105|63
+301|105|81
+302|105|99
+303|105|117
+304|105|135
+305|105|12
+306|105|30
+307|105|48
+308|105|66
+309|105|84
+310|105|102
+311|105|120
+312|105|138
+313|106|10
+314|106|28
+315|106|46
+316|106|64
+317|106|82
+318|106|100
+319|106|118
+320|106|136
+321|106|5
+322|106|23
+323|106|41
+324|106|59
+325|106|77
+326|106|95
+327|106|113
+328|106|131
+329|107|9
+330|107|27
+331|107|45
+332|107|63
+333|107|81
+334|107|99
+335|107|117
+336|107|135
+337|107|12
+338|107|30
+339|107|48
+340|107|66
+341|107|84
+342|107|102
+343|107|120
+344|107|138
+345|108|14
+346|108|32
+347|108|50
+348|108|68
+349|108|86
+350|108|104
+351|108|122
+352|108|140
+353|108|15
+354|108|33
+355|108|51
+356|108|69
+357|108|87
+358|108|105
+359|108|123
+360|108|141
+361|109|1
+362|109|19
+363|109|37
+364|109|55
+365|109|73
+366|109|91
+367|109|109
+368|109|127
+369|109|2
+370|109|20
+371|109|38
+372|109|56
+373|109|74
+374|109|92
+375|109|110
+376|109|128
+377|109|18
+378|109|36
+379|109|54
+380|109|72
+381|109|90
+382|109|108
+383|109|126
+384|109|144
+385|110|17
+386|110|35
+387|110|53
+388|110|71
+389|110|89
+390|110|107
+391|110|125
+392|110|143
+393|110|10
+394|110|28
+395|110|46
+396|110|64
+397|110|82
+398|110|100
+399|110|118
+400|110|136
+401|111|11
+402|111|29
+403|111|47
+404|111|65
+405|111|83
+406|111|101
+407|111|119
+408|111|137
+409|111|12
+410|111|30
+411|111|48
+412|111|66
+413|111|84
+414|111|102
+415|111|120
+416|111|138
+417|113|14
+418|113|32
+419|113|50
+420|113|68
+421|113|86
+422|113|104
+423|113|122
+424|113|140
+425|113|15
+426|113|33
+427|113|51
+428|113|69
+429|113|87
+430|113|105
+431|113|123
+432|113|141
+433|114|14
+434|114|32
+435|114|50
+436|114|68
+437|114|86
+438|114|104
+439|114|122
+440|114|140
+441|114|15
+442|114|33
+443|114|51
+444|114|69
+445|114|87
+446|114|105
+447|114|123
+448|114|141
+449|115|6
+450|115|24
+451|115|42
+452|115|60
+453|115|78
+454|115|96
+455|115|114
+456|115|132
+457|115|15
+458|115|33
+459|115|51
+460|115|69
+461|115|87
+462|115|105
+463|115|123
+464|115|141
+465|116|14
+466|116|32
+467|116|50
+468|116|68
+469|116|86
+470|116|104
+471|116|122
+472|116|140
+473|116|15
+474|116|33
+475|116|51
+476|116|69
+477|116|87
+478|116|105
+479|116|123
+480|116|141
+481|117|18
+482|117|36
+483|117|54
+484|117|72
+485|117|90
+486|117|108
+487|117|126
+488|117|144
+489|118|5
+490|118|23
+491|118|41
+492|118|59
+493|118|77
+494|118|95
+495|118|113
+496|118|131
+497|119|5
+498|119|23
+499|119|41
+500|119|59
+501|119|77
+502|119|95
+503|119|113
+504|119|131
+505|120|17
+506|120|35
+507|120|53
+508|120|71
+509|120|89
+510|120|107
+511|120|125
+512|120|143
+513|121|14
+514|121|32
+515|121|50
+516|121|68
+517|121|86
+518|121|104
+519|121|122
+520|121|140
+521|122|1
+522|122|19
+523|122|37
+524|122|55
+525|122|73
+526|122|91
+527|122|109
+528|122|127
+529|122|18
+530|122|36
+531|122|54
+532|122|72
+533|122|90
+534|122|108
+535|122|126
+536|122|144
+537|123|14
+538|123|32
+539|123|50
+540|123|68
+541|123|86
+542|123|104
+543|123|122
+544|123|140
+545|123|4
+546|123|22
+547|123|40
+548|123|58
+549|123|76
+550|123|94
+551|123|112
+552|123|130
+553|124|12
+554|124|30
+555|124|48
+556|124|66
+557|124|84
+558|124|102
+559|124|120
+560|124|138
+561|124|11
+562|124|29
+563|124|47
+564|124|65
+565|124|83
+566|124|101
+567|124|119
+568|124|137
+569|125|12
+570|125|30
+571|125|48
+572|125|66
+573|125|84
+574|125|102
+575|125|120
+576|125|138
+577|125|11
+578|125|29
+579|125|47
+580|125|65
+581|125|83
+582|125|101
+583|125|119
+584|125|137
+585|127|12
+586|127|30
+587|127|48
+588|127|66
+589|127|84
+590|127|102
+591|127|120
+592|127|138
+593|127|11
+594|127|29
+595|127|47
+596|127|65
+597|127|83
+598|127|101
+599|127|119
+600|127|137
+601|128|4
+602|128|22
+603|128|40
+604|128|58
+605|128|76
+606|128|94
+607|128|112
+608|128|130
+609|128|5
+610|128|23
+611|128|41
+612|128|59
+613|128|77
+614|128|95
+615|128|113
+616|128|131
+617|128|14
+618|128|32
+619|128|50
+620|128|68
+621|128|86
+622|128|104
+623|128|122
+624|128|140
+625|128|16
+626|128|34
+627|128|52
+628|128|70
+629|128|88
+630|128|106
+631|128|124
+632|128|142
+633|129|17
+634|129|35
+635|129|53
+636|129|71
+637|129|89
+638|129|107
+639|129|125
+640|129|143
+641|130|12
+642|130|30
+643|130|48
+644|130|66
+645|130|84
+646|130|102
+647|130|120
+648|130|138
+649|130|5
+650|130|23
+651|130|41
+652|130|59
+653|130|77
+654|130|95
+655|130|113
+656|130|131
+657|131|5
+658|131|23
+659|131|41
+660|131|59
+661|131|77
+662|131|95
+663|131|113
+664|131|131
+665|131|4
+666|131|22
+667|131|40
+668|131|58
+669|131|76
+670|131|94
+671|131|112
+672|131|130
+673|131|16
+674|131|34
+675|131|52
+676|131|70
+677|131|88
+678|131|106
+679|131|124
+680|131|142
+681|132|3
+682|132|21
+683|132|39
+684|132|57
+685|132|75
+686|132|93
+687|132|111
+688|132|129
+689|132|12
+690|132|30
+691|132|48
+692|132|66
+693|132|84
+694|132|102
+695|132|120
+696|132|138
+697|133|9
+698|133|27
+699|133|45
+700|133|63
+701|133|81
+702|133|99
+703|133|117
+704|133|135
+705|133|4
+706|133|22
+707|133|40
+708|133|58
+709|133|76
+710|133|94
+711|133|112
+712|133|130
+713|134|17
+714|134|35
+715|134|53
+716|134|71
+717|134|89
+718|134|107
+719|134|125
+720|134|143
+721|135|9
+722|135|27
+723|135|45
+724|135|63
+725|135|81
+726|135|99
+727|135|117
+728|135|135
+729|135|17
+730|135|35
+731|135|53
+732|135|71
+733|135|89
+734|135|107
+735|135|125
+736|135|143
+737|136|10
+738|136|28
+739|136|46
+740|136|64
+741|136|82
+742|136|100
+743|136|118
+744|136|136
+745|136|17
+746|136|35
+747|136|53
+748|136|71
+749|136|89
+750|136|107
+751|136|125
+752|136|143
+753|137|14
+754|137|32
+755|137|50
+756|137|68
+757|137|86
+758|137|104
+759|137|122
+760|137|140
+761|137|15
+762|137|33
+763|137|51
+764|137|69
+765|137|87
+766|137|105
+767|137|123
+768|137|141
+769|137|4
+770|137|22
+771|137|40
+772|137|58
+773|137|76
+774|137|94
+775|137|112
+776|137|130
+777|138|9
+778|138|27
+779|138|45
+780|138|63
+781|138|81
+782|138|99
+783|138|117
+784|138|135
+785|138|12
+786|138|30
+787|138|48
+788|138|66
+789|138|84
+790|138|102
+791|138|120
+792|138|138
+793|139|12
+794|139|30
+795|139|48
+796|139|66
+797|139|84
+798|139|102
+799|139|120
+800|139|138
+801|139|10
+802|139|28
+803|139|46
+804|139|64
+805|139|82
+806|139|100
+807|139|118
+808|139|136
+809|140|14
+810|140|32
+811|140|50
+812|140|68
+813|140|86
+814|140|104
+815|140|122
+816|140|140
+817|140|15
+818|140|33
+819|140|51
+820|140|69
+821|140|87
+822|140|105
+823|140|123
+824|140|141
+825|141|14
+826|141|32
+827|141|50
+828|141|68
+829|141|86
+830|141|104
+831|141|122
+832|141|140
+833|141|15
+834|141|33
+835|141|51
+836|141|69
+837|141|87
+838|141|105
+839|141|123
+840|141|141
+841|142|1
+842|142|19
+843|142|37
+844|142|55
+845|142|73
+846|142|91
+847|142|109
+848|142|127
+849|142|6
+850|142|24
+851|142|42
+852|142|60
+853|142|78
+854|142|96
+855|142|114
+856|142|132
+857|143|1
+858|143|19
+859|143|37
+860|143|55
+861|143|73
+862|143|91
+863|143|109
+864|143|127
+865|143|9
+866|143|27
+867|143|45
+868|143|63
+869|143|81
+870|143|99
+871|143|117
+872|143|135
+873|143|6
+874|143|24
+875|143|42
+876|143|60
+877|143|78
+878|143|96
+879|143|114
+880|143|132
+881|144|5
+882|144|23
+883|144|41
+884|144|59
+885|144|77
+886|144|95
+887|144|113
+888|144|131
+889|144|9
+890|144|27
+891|144|45
+892|144|63
+893|144|81
+894|144|99
+895|144|117
+896|144|135
+897|144|16
+898|144|34
+899|144|52
+900|144|70
+901|144|88
+902|144|106
+903|144|124
+904|144|142
+905|145|13
+906|145|31
+907|145|49
+908|145|67
+909|145|85
+910|145|103
+911|145|121
+912|145|139
+913|145|18
+914|145|36
+915|145|54
+916|145|72
+917|145|90
+918|145|108
+919|145|126
+920|145|144
+921|146|6
+922|146|24
+923|146|42
+924|146|60
+925|146|78
+926|146|96
+927|146|114
+928|146|132
+929|146|15
+930|146|33
+931|146|51
+932|146|69
+933|146|87
+934|146|105
+935|146|123
+936|146|141
+937|146|14
+938|146|32
+939|146|50
+940|146|68
+941|146|86
+942|146|104
+943|146|122
+944|146|140
+945|49|34
+946|49|52
+947|49|70
+948|49|88
+949|49|106
+950|49|124
+951|49|142
+952|49|4
+953|49|22
+954|49|40
+955|49|58
+956|49|76
+957|49|94
+958|49|112
+959|49|130
+1630|213|145
+1631|213|153
+1632|214|146
+1633|214|147
+1634|215|147
+1635|216|148
+1636|216|149
+1637|217|149
+1638|217|155
+1639|218|150
+1640|218|156
+1641|219|150
+1642|219|154
+1643|219|151
+1644|220|150
+1645|220|146
+1646|221|156
+1647|221|146
+1648|222|151
+1649|223|152
+1650|223|145
+1651|224|153
+1652|225|149
+1653|225|152
+1654|226|145
+1655|226|153
+1656|227|147
+1657|227|156
+1658|228|156
+1659|229|154
+1660|230|155
+1661|230|151
+1662|231|155
+1663|232|153
+1664|232|154
+1665|233|150
+1666|233|154
+1667|234|151
+1668|234|155
+1669|235|153
+1670|235|155
+1671|236|150
+1672|236|155
+1673|236|156
+1674|237|150
+1675|237|156
+
+--select id, plant_id, ayush_system from preparations order by id
+1|70|ayurveda
+2|91|ayurveda
+3|95|ayurveda
+4|103|ayurveda
+5|106|ayurveda
+6|108|ayurveda
+7|109|ayurveda
+8|114|ayurveda
+9|115|ayurveda
+10|125|ayurveda
+11|128|ayurveda
+12|131|ayurveda
+13|136|ayurveda
+14|71|ayurveda
+15|72|ayurveda
+16|73|ayurveda
+17|74|ayurveda
+18|75|ayurveda
+19|76|ayurveda
+20|77|ayurveda
+21|78|ayurveda
+22|79|ayurveda
+23|80|ayurveda
+24|81|ayurveda
+25|82|ayurveda
+26|83|ayurveda
+27|84|ayurveda
+28|85|ayurveda
+29|86|ayurveda
+30|87|ayurveda
+31|88|ayurveda
+32|89|ayurveda
+33|90|ayurveda
+34|1|ayurveda
+35|2|ayurveda
+36|3|ayurveda
+37|4|ayurveda
+38|5|ayurveda
+39|6|ayurveda
+40|7|ayurveda
+41|8|ayurveda
+42|9|ayurveda
+43|10|ayurveda
+44|11|ayurveda
+45|12|ayurveda
+46|13|ayurveda
+47|14|ayurveda
+48|15|ayurveda
+49|16|ayurveda
+50|17|ayurveda
+51|18|ayurveda
+52|19|ayurveda
+53|20|ayurveda
+54|21|ayurveda
+55|22|ayurveda
+56|23|ayurveda
+57|24|ayurveda
+58|25|ayurveda
+59|26|ayurveda
+60|27|ayurveda
+61|28|ayurveda
+62|29|ayurveda
+63|30|ayurveda
+64|31|ayurveda
+65|32|ayurveda
+66|33|ayurveda
+67|34|ayurveda
+68|35|ayurveda
+69|36|ayurveda
+70|37|ayurveda
+71|38|ayurveda
+72|39|ayurveda
+73|40|ayurveda
+74|41|ayurveda
+75|42|ayurveda
+76|43|ayurveda
+77|44|ayurveda
+78|45|ayurveda
+79|46|ayurveda
+80|47|ayurveda
+81|48|ayurveda
+82|49|ayurveda
+83|50|ayurveda
+84|51|ayurveda
+85|52|ayurveda
+86|53|ayurveda
+87|54|ayurveda
+88|55|ayurveda
+89|56|ayurveda
+90|57|ayurveda
+91|58|ayurveda
+92|59|ayurveda
+93|60|ayurveda
+94|61|ayurveda
+95|62|ayurveda
+96|63|ayurveda
+97|64|ayurveda
+98|65|ayurveda
+99|66|ayurveda
+100|67|ayurveda
+101|68|ayurveda
+102|69|ayurveda
+103|144|unani
+104|204|unani
+105|205|unani
+106|206|unani
+107|213|homeopathy
+108|214|homeopathy
+109|215|homeopathy
+110|216|homeopathy
+111|217|homeopathy
+112|218|homeopathy
+113|219|homeopathy
+114|220|homeopathy
+115|221|homeopathy
+116|222|homeopathy
+117|223|homeopathy
+118|224|homeopathy
+119|225|homeopathy
+120|226|homeopathy
+121|227|homeopathy
+122|228|homeopathy
+123|229|homeopathy
+124|230|homeopathy
+125|231|homeopathy
+126|232|homeopathy
+127|233|homeopathy
+128|234|homeopathy
+129|235|homeopathy
+130|236|homeopathy
+131|237|homeopathy
+132|108|ayurveda

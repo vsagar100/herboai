@@ -6,8 +6,9 @@ implementation without modifying it.
 from __future__ import annotations
 
 import copy
+import os
+from functools import lru_cache
 from typing import Any, Dict, List, Optional, Sequence, Union
-
 import torch
 from services.indic_trans2 import IndicTranslator
 
@@ -35,6 +36,21 @@ def _lang_tag(lang: str) -> str:
         raise ValueError(f"Unsupported language code: {lang}")
     return tag
 
+# ----------------------------
+# Translation Cache (LRU)
+# ----------------------------
+# Caches only DIRECT routes (en->hi/mr or hi/mr->en). Indic-to-Indic still goes via-English.
+# This gives a big speedup for repeated queries / repeated chunks.
+_TRANSLATION_CACHE_MAXSIZE = int(os.getenv("TRANSLATION_CACHE_MAXSIZE", "4096"))
+
+@lru_cache(maxsize=_TRANSLATION_CACHE_MAXSIZE)
+def _cached_direct_translate(text: str, src_lang: str, tgt_lang: str) -> str:
+    svc = get_indic_translation_service()
+    # Safety: keep cache bounded to avoid huge memory use for very long texts
+    if len(text) > 2000:
+        return svc._direct_translate_uncached(text, src_lang, tgt_lang)
+    return svc._direct_translate_uncached(text, src_lang, tgt_lang)
+
 
 class IndicTranslationService:
     """
@@ -52,14 +68,27 @@ class IndicTranslationService:
     # Core helpers
     # ------------------------------------------------------------------
 
+    def _direct_translate_uncached(self, text: str, src_lang: str, tgt_lang: str) -> str:
+        """
+        Direct single-hop translation where either src or tgt is English.
+        This is the expensive model call that we cache.
+        """
+        model, src_tag, tgt_tag = self._select_route(src_lang, tgt_lang)
+        return self._run_translation(model, text, src_tag, tgt_tag)
+
+
     def translate_text(self, text: str, src_lang: str, tgt_lang: str) -> str:
         if not text or src_lang == tgt_lang:
             return text
+
+        # Indic -> Indic uses via-English routing
         if src_lang != "en" and tgt_lang != "en":
             interim = self.translate_text(text, src_lang, "en")
             return self.translate_text(interim, "en", tgt_lang)
-        model, src_tag, tgt_tag = self._select_route(src_lang, tgt_lang)
-        return self._run_translation(model, text, src_tag, tgt_tag)
+
+        # Direct route (en<->hi/mr): cached
+        return _cached_direct_translate(text, src_lang, tgt_lang)
+
 
     def translate_batch(
         self, texts: Sequence[str], src_lang: str, tgt_lang: str
@@ -270,9 +299,9 @@ class IndicTranslationService:
                 forced_bos_token_id=tgt_id,
                 min_length=0,
                 max_length=256,
-                num_beams=5,
+                num_beams=1,
                 num_return_sequences=1,
-                use_cache=False,
+                use_cache=True,
             )
 
         decoded = model.tokenizer.batch_decode(

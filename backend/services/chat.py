@@ -6,6 +6,7 @@ import os
 from typing import Dict, Any, List, Optional
 from sentence_transformers import SentenceTransformer
 from sqlite_vec import serialize_float32
+import numpy as np
 
 from db import get_db
 from api.nlu_optimized import detect_language, classify_intent, extract_entities
@@ -19,6 +20,8 @@ from services.response_builder import (
     build_plant_knowledge_snippet,
     build_disease_knowledge_snippet,
 )
+from services.llm_gateway import generate_herboai_answer
+
 from api.context import get_last_context, persist_turn
 from semantic import top_plants_for_disease, top_preparations_for_disease, ingredients_for_preparation
 
@@ -29,6 +32,34 @@ log = logging.getLogger("pipeline")
 _EMB_MODEL = None
 _SENTENCE_MODEL_NAME = os.getenv("SENTENCE_MODEL_NAME", "all-MiniLM-L6-v2")
 _SENTENCE_MODEL_CACHE = os.getenv("SENTENCE_MODEL_CACHE")  # e.g., /data/models/sentencetransformers
+
+def warmup_pipeline():
+    """
+    Warm up heavyweight components so first real request is not slow.
+    Safe to call multiple times.
+    """
+    try:
+        # 1) Translator (background loader)
+        get_async_translator().warmup()
+
+        # 2) IndicTranslationService (loads IndicTrans2 models)
+        get_indic_translation_service()
+
+        # 3) Embedding model (SentenceTransformer)
+        global _EMB_MODEL
+        if _EMB_MODEL is None:
+            if _SENTENCE_MODEL_CACHE:
+                _EMB_MODEL = SentenceTransformer(_SENTENCE_MODEL_NAME, cache_folder=_SENTENCE_MODEL_CACHE)
+            else:
+                _EMB_MODEL = SentenceTransformer(_SENTENCE_MODEL_NAME)
+
+        # tiny warm query to compile/allocate CPU kernels
+        _ = _EMB_MODEL.encode(["warmup"], normalize_embeddings=True)
+
+        log.info("[Warmup] translator + embeddings warmed successfully")
+    except Exception as e:
+        log.exception(f"[Warmup] failed: {e}")
+
 
 # ============================================================================
 # HELPERS
@@ -177,6 +208,23 @@ def _l2_normalize(v: List[float]) -> List[float]:
     """L2 normalize vector for cosine similarity"""
     s = math.sqrt(sum(x*x for x in v)) or 1.0
     return [x / s for x in v]
+
+def _embed_384_np(text: str) -> np.ndarray:
+    """Return L2-normalized 384-dim embedding as float32 numpy array."""
+    global _EMB_MODEL
+    if _EMB_MODEL is None:
+        if _SENTENCE_MODEL_CACHE:
+            print(f"[Embeddings] Loading {_SENTENCE_MODEL_NAME} with cache at {_SENTENCE_MODEL_CACHE}")
+            _EMB_MODEL = SentenceTransformer(_SENTENCE_MODEL_NAME, cache_folder=_SENTENCE_MODEL_CACHE)
+        else:
+            print(f"[Embeddings] Loading {_SENTENCE_MODEL_NAME} (default cache)")
+            _EMB_MODEL = SentenceTransformer(_SENTENCE_MODEL_NAME)
+
+    v = _EMB_MODEL.encode(text, convert_to_numpy=True).astype("float32")
+    n = np.linalg.norm(v)
+    if n > 0:
+        v = v / n
+    return v
 
 def _embed_384(text: str) -> bytes:
     """Generate 384-dim embedding using all-MiniLM-L6-v2"""
@@ -413,7 +461,6 @@ def _preparations_for_plant(plant_id: int, k: int = 5) -> List[Dict]:
         preps.append(d)
     return preps
 
-
 def _build_plant_preparation_answer(plant: Dict[str, Any], preps: List[Dict[str, Any]]) -> str:
     """Human-readable answer focused on how to prepare this plant's remedies."""
     name_en = plant.get("common_name_en") or plant.get("botanical_name") or "the plant"
@@ -474,6 +521,89 @@ def _build_plant_preparation_answer(plant: Dict[str, Any], preps: List[Dict[str,
         "Always confirm dosage and suitability with a qualified Ayurvedic practitioner."
     )
     return "\n".join(lines)
+
+def _fetch_knowledge_chunk(chunk_id: int) -> Optional[Dict[str, Any]]:
+    db = get_db()
+    db.row_factory = lambda cursor, row: dict(zip([col[0] for col in cursor.description], row))
+    row = db.execute(
+        """
+        SELECT id, entity_type, entity_id, section, content, source, embedding
+        FROM knowledge_chunks
+        WHERE id = ?
+        """,
+        (chunk_id,),
+    ).fetchone()
+    if not row:
+        return None
+    # embedding is left as bytes; we only decode when needed
+    return row
+
+
+def _search_knowledge_chunks(
+    query: str,
+    plants_full: List[Dict[str, Any]],
+    diseases_full: List[Dict[str, Any]],
+    k: int = 5,
+) -> List[Dict[str, Any]]:
+    """
+    Python-only cosine similarity search over knowledge_chunks.embedding.
+    No vec0 / sqlite-vec virtual table required.
+    """
+    if not query:
+        return []
+
+    db = get_db()
+    db.row_factory = sqlite3.Row if False else db.row_factory  # keep whatever you have
+
+    qvec = _embed_384_np(query)
+
+    # Optional filtering by entities present in this turn
+    plant_ids = [p.get("id") for p in plants_full if p.get("id")]
+    disease_ids = [d.get("id") for d in diseases_full if d.get("id")]
+
+    where_clauses = []
+    params: list[Any] = []
+
+    if plant_ids:
+        placeholders = ",".join("?" for _ in plant_ids)
+        where_clauses.append(f"(entity_type = 'plant' AND entity_id IN ({placeholders}))")
+        params.extend(plant_ids)
+
+    if disease_ids:
+        placeholders = ",".join("?" for _ in disease_ids)
+        where_clauses.append(f"(entity_type = 'disease' AND entity_id IN ({placeholders}))")
+        params.extend(disease_ids)
+
+    # Always allow some general knowledge chunks
+    where_clauses.append("entity_type = 'general'")
+
+    where_sql = " OR ".join(where_clauses)
+    sql = f"""
+        SELECT id, entity_type, entity_id, section, content, source, embedding
+        FROM knowledge_chunks
+        WHERE {where_sql}
+    """
+
+    rows = db.execute(sql, tuple(params)).fetchall()
+    scored: list[tuple[float, Dict[str, Any]]] = []
+
+    for row in rows:
+        emb_bytes = row["embedding"]
+        if not emb_bytes:
+            continue
+        vec = np.frombuffer(emb_bytes, dtype="float32")
+        if vec.size != qvec.size:
+            continue
+        # assuming both normalized -> dot = cosine similarity
+        sim = float(np.dot(qvec, vec))
+        rdict = dict(row)
+        rdict["score"] = sim
+        scored.append((sim, rdict))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top = [r for _, r in scored[:k]]
+    print(f"[RAG] knowledge_chunks: considered={len(scored)}, top={len(top)}")
+    return top
 
 # ============================================================================
 # KNOWLEDGE CONTEXT BUILDING
@@ -623,6 +753,14 @@ def build_remedy_context(disease_row: Dict) -> str:
     
     return "\n".join(parts)
 
+def _chunks_to_context(chunks: List[Dict[str, Any]]) -> str:
+    if not chunks:
+        return ""
+    lines = ["=== KNOWLEDGE CHUNKS ==="]
+    for c in chunks:
+        label = c.get("source") or c.get("section") or c.get("entity_type") or "HerboAI note"
+        lines.append(f"[{label}] {c.get('content','').strip()}")
+    return "\n\n".join(lines)
 
 # ============================================================================
 # MAIN PIPELINE
@@ -769,11 +907,14 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
         )
 
     print(f"[Pipeline] After hydration: {len(plants_full)} plants, {len(diseases_full)} diseases")
-    
+    # Step 6.5: Retrieve knowledge chunks for RAG (based on entities + query)
+    rag_query_text = text_for_intent or user_text
+    rag_chunks = _search_knowledge_chunks(rag_query_text, plants_full, diseases_full, k=5)
+
     # Step 7: Deterministic, chat-style response generation (no external LLM yet)
     
     structured: Dict[str, Any] = {}
-    answer_text_en = ""
+    fallback_answer_en = ""
 
     # --- 7A: Preparation-info should be PLANT-centric when a plant is clear ---
     if intent == "preparation_info":
@@ -784,7 +925,7 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
                 "plant": plant,
                 "preparations": preps,
             }
-            answer_text_en = _build_plant_preparation_answer(plant, preps)
+            fallback_answer_en = _build_plant_preparation_answer(plant, preps)
         elif diseases_full:
             # Fallback: if user asked "how to prepare decoction for <disease>"
             disease_row = diseases_full[0]
@@ -793,14 +934,14 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
                 "plants": top_plants_for_disease(disease_row["id"], k=5),
                 "preparations": top_preparations_for_disease(disease_row["id"], k=3),
             }
-            answer_text_en = build_remedy_answer(
+            fallback_answer_en = build_remedy_answer(
                 disease_row,
                 structured["plants"],
                 structured["preparations"],
             )
         else:
             structured = {}
-            answer_text_en = build_no_data_answer(user_text)
+            fallback_answer_en = build_no_data_answer(user_text)
 
     # --- 7B: Disease-centric remedy lookup ---
     elif intent == "remedy_lookup" and diseases_full:
@@ -837,6 +978,53 @@ def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
     else:
         structured = {}
         answer_text_en = build_no_data_answer(user_text)
+    
+    # ----- Step 7.5: Optional LLM-based RAG answer (v2 pipeline) -----
+    use_llm = os.getenv("HERBOAI_USE_LLM", "1") == "1"
+    answer_text_en = fallback_answer_en  # default
+
+    try:
+        if use_llm:
+            # Context from entities/preparations
+            base_context = build_herboai_context(
+                plants_full,
+                diseases_full,
+                structured.get("preparations", []),
+            )
+            # Add RAG chunks (if any)
+            chunk_ctx = _chunks_to_context(rag_chunks)
+            full_context = base_context
+            if chunk_ctx:
+                full_context = (base_context + "\n\n" + chunk_ctx) if base_context else chunk_ctx
+
+            print("[HerboAI LLM] Calling model with RAG context...")
+            answer_text_en = generate_herboai_answer(
+                system_prompt=HERBOAI_SYSTEM_PROMPT,
+                user_query_en=rag_query_text,
+                context=full_context,
+            )
+            print("[HerboAI LLM] Answer generated via LLM.")
+        else:
+            print("[HerboAI LLM] Skipped (HERBOAI_USE_LLM != 1); using fallback template answer.")
+    except Exception as e:
+        logging.exception("[HerboAI LLM] Error; falling back to deterministic answer.")
+        answer_text_en = fallback_answer_en
+
+    # Also expose chunks in structured payload so UI can show sources later if needed
+    if rag_chunks:
+        structured["knowledge_chunks"] = [
+            {
+                "id": c["id"],
+                "entity_type": c["entity_type"],
+                "entity_id": c["entity_id"],
+                "section": c["section"],
+                "content": c["content"],
+                "source": c["source"],
+                "score": c["score"],
+            }
+            for c in rag_chunks
+        ]
+
 
 
     # Light conversational wrapper so it feels like an AI guide

@@ -11,7 +11,7 @@ from repositories.preparations_repo import (
     list_preparations, get_preparation, get_ingredients, get_indications
 )
 from repositories.search_repo import remedy_view_for_disease
-from services.chat import run_pipeline
+from services.chat import run_pipeline, warmup_pipeline
 from api.nlu_optimized import detect_language
 from db import get_db
 
