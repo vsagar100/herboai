@@ -7,6 +7,7 @@ node_modules
 backend/routes/__pycache__
 backend/node_modules/__pycache__
 backend/database/sqlite3.exe
-backend/models/*.gguf
+backend/models/*
 *.pyc
 LETTER.*
+backend/wheels

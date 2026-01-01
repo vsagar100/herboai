@@ -9,6 +9,7 @@ import copy
 import os
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Sequence, Union
+
 import torch
 from services.indic_trans2 import IndicTranslator
 
@@ -36,12 +37,14 @@ def _lang_tag(lang: str) -> str:
         raise ValueError(f"Unsupported language code: {lang}")
     return tag
 
+
 # ----------------------------
 # Translation Cache (LRU)
 # ----------------------------
 # Caches only DIRECT routes (en->hi/mr or hi/mr->en). Indic-to-Indic still goes via-English.
 # This gives a big speedup for repeated queries / repeated chunks.
 _TRANSLATION_CACHE_MAXSIZE = int(os.getenv("TRANSLATION_CACHE_MAXSIZE", "4096"))
+
 
 @lru_cache(maxsize=_TRANSLATION_CACHE_MAXSIZE)
 def _cached_direct_translate(text: str, src_lang: str, tgt_lang: str) -> str:
@@ -76,7 +79,6 @@ class IndicTranslationService:
         model, src_tag, tgt_tag = self._select_route(src_lang, tgt_lang)
         return self._run_translation(model, text, src_tag, tgt_tag)
 
-
     def translate_text(self, text: str, src_lang: str, tgt_lang: str) -> str:
         if not text or src_lang == tgt_lang:
             return text
@@ -89,10 +91,7 @@ class IndicTranslationService:
         # Direct route (en<->hi/mr): cached
         return _cached_direct_translate(text, src_lang, tgt_lang)
 
-
-    def translate_batch(
-        self, texts: Sequence[str], src_lang: str, tgt_lang: str
-    ) -> List[str]:
+    def translate_batch(self, texts: Sequence[str], src_lang: str, tgt_lang: str) -> List[str]:
         if src_lang == tgt_lang:
             return list(texts)
         if src_lang != "en" and tgt_lang != "en":
@@ -111,9 +110,7 @@ class IndicTranslationService:
     def to_mr(self, text: str) -> str:
         return self.translate_text(text, "en", "mr")
 
-    def translate_values(
-        self, payload: Union[Dict, List], src_lang: str, tgt_lang: str
-    ) -> Union[Dict, List]:
+    def translate_values(self, payload: Union[Dict, List], src_lang: str, tgt_lang: str) -> Union[Dict, List]:
         if src_lang == tgt_lang:
             return payload
 
@@ -131,11 +128,7 @@ class IndicTranslationService:
                 # repeated model calls and reduce latency.
                 if all(isinstance(v, str) or v is None for v in value):
                     strings = [v for v in value if isinstance(v, str) and v.strip()]
-                    translated = iter(
-                        self.translate_batch(strings, src_lang, tgt_lang)
-                        if strings
-                        else []
-                    )
+                    translated = iter(self.translate_batch(strings, src_lang, tgt_lang) if strings else [])
                     out: List[Any] = []
                     for v in value:
                         if isinstance(v, str) and v.strip():
@@ -162,18 +155,14 @@ class IndicTranslationService:
         if not text or not text.strip():
             return "en"
 
-        # Normalize once
         raw = text.strip()
-        # Light cleanup: remove leading stray punctuation that can appear from translation artifacts
         cleaned = raw.lstrip(" .,:;|/\\-—–·*#\u200c\u200b")
 
         # 0) Script probe
         def has_devanagari(s: str) -> bool:
-            # Any Devanagari codepoint?
-            return any('\u0900' <= ch <= '\u097F' for ch in s)
+            return any("\u0900" <= ch <= "\u097F" for ch in s)
 
         if not has_devanagari(cleaned):
-            # Allow a trustworthy override (English UI may still tag mar/hi)
             return "en"
 
         # 1) If caller provided a hint and it matches the script, trust it
@@ -182,73 +171,84 @@ class IndicTranslationService:
 
         # 2) Tokenize (very light)
         import re
+
         toks = [t for t in re.split(r"[^\w\u0900-\u097F]+", cleaned) if t]
 
-        # 3) High-signal lexicons (curated, extensible)
-        #    NOTE: keep these *small but precise*. Add more as you see real data.
+        # 3) High-signal lexicons (small but precise)
+        #    IMPORTANT: keep shared/medical/ayurveda terms in NEUTRAL to avoid flip-flops.
         HINDI_ONLY = {
-            "बढ़ाने", "रोग", "प्रतिरोधक", "क्षमता", "आयुर्वेद", "उपाय", "क्या", "और", "में", "है", "नहीं",
-            "के", "लिए", "वाला", "वाले", "केंद्रित", "उत्पन्न", "रक्तचाप"
+            # core Hindi function words
+            "क्या", "और", "में","है","नहीं","के","लिए","यह","वह","इस","उस","इन","उन","कब","कहाँ","कौन",
+            "किस","किसे","किसका","किसकी","किसके","कैसे","क्यों","क्यूँ","कृपया","बताइए","बताएं","बताइये","बताओ",
+            "को","से","पर","तक","बिना","सहित","द्वारा","बारे","बारेमें","हैं","था","थे","थी","हुआ","हुई","हुए","चाहिए",
+            "चाहता","चाहती","वाला","वाले","वाली",
         }
+
         MARATHI_ONLY = {
-            "वाढवणारे", "रोग", "प्रतिकार", "शक्ती", "आयुर्वेद", "उपाय", "काय", "आणि", "मध्ये", "आहे", "नाही",
-            "किंवा", "होय", "औषध", "रक्तदाब", "उपयुक्त", "लक्षणे", "उपचार", "रोगप्रतिकारक", "त्रास", "कसा", 
-            "किती", "कुठे", "कोण", "केल्याने", "करा", "करावे", "करून", "मुळे", "प्रभावित", "मूळ", "संपूर्ण",
-            "काढा", "निर्मित", "सेंद्रिय"
+            # Marathi function words / pronouns
+            "काय","आणि","मध्ये","आहे","नाही","किंवा","होय","कधी","कसा","कसे","किती","कुठे","कोण","मला","तुला",
+            "आपल्याला","त्यांना","हे","ते","ही","तो","ती","त्या","यात","त्यात","इथे","तिथे","साठी","कडून","कडे","पासून",
+            "पर्यंत","मधून","वर","खाली","पण","मात्र","म्हणून","तरी","होतो","होते","होतात","होईल","होणार","करतो",
+            "करते","करतात","करणं","करायला","करायचं","करायचे","घ्यावं","घ्यावे","घ्या","प्यावं","खावं","वाढवणारे","रोगप्रतिकारक",
+            "रोग प्रतिकार","शक्ती","त्रास","डोकं","पोट","पोटदुखी",
         }
+
         # Words shared across both (neutral): ignore in scoring
-        NEUTRAL = {"रोग", "आयुर्वेद", "उपाय"}  # add as needed
+        NEUTRAL = {
+            # Ayurveda/health topic words (shared)
+            "रोग","आयुर्वेद","आयुर्वेदिक","उपाय","औषध","दवा","इलाज","उपचार","लक्षण","मात्रा","सेवन","उपयोग",
+            "रक्तदाब","रक्तचाप","फायदा","फायदे","तोटा","नुकसान","दर्द","बुखार","सर्दी","खांसी","जुकाम","गैस","पाचन",
+            "शुगर","डायबिटीज","काढा","चूर्ण","वटी","लेप","घृत","तेल",        
+            }
 
-        # 4) Morphology & function-word patterns
-        #    Marathi: participial & infinitive patterns; Hindi: oblique/ko/me/vale/waale etc.
-        MR_SUFFIXES = ("णारा", "णारे", "ण्यात", "मध्ये", "करणे", "वाढ", "जास्त", "कमी", "पणा", "पणे")
-        HI_SUFFIXES = ("वाला", "वाले", "वाली", "बढ़", "करणा", "में", "को", "से", "की", "का", "के")
+        # 4) Morphology patterns (true suffixes only; keep postpositions as tokens)
+        MR_SUFFIXES = (
+           "णारा","णारे","णारी","ण्यात","ताना","तील","ल्यावर","ल्याने","ल्यास","ण्याची","ण्याचे","ण्याला",
+        )
+        HI_SUFFIXES = (
+            "वाला","वाले","वाली","एगा","एगी","एंगे","इए","इये",
+        )
 
-        # 5) Score hits
+        # 5) Score hits (weighted)
         hi_score = 0
         mr_score = 0
 
         for w in toks:
             if w in NEUTRAL:
                 continue
+
             if w in HINDI_ONLY:
-                hi_score += 2  # lexicon is high-signal
+                hi_score += 2
             if w in MARATHI_ONLY:
                 mr_score += 2
 
-            # suffixes
+            # suffixes (light nudge)
             if w.endswith(MR_SUFFIXES):
                 mr_score += 1
             if w.endswith(HI_SUFFIXES):
                 hi_score += 1
 
-        # 6) Extra n-gram nudges (very short inputs benefit)
+        # 6) Extra n-gram nudges (short inputs benefit)
         s = cleaned
         if "प्रतिरोधक क्षमता" in s:
             hi_score += 3
-        if "रोग प्रतिकार शक्ती" in s or "रोगप्रतिकारक शक्ती" in s or "वाढवणारे" in s:
+        if ("रोग प्रतिकार शक्ती" in s) or ("रोगप्रतिकारक शक्ती" in s) or ("वाढवणारे" in s):
             mr_score += 3
 
         # 7) Decide with confidence thresholds
-        #    - strong margin -> pick winner
-        #    - small margin with Marathi features present -> Marathi
-        #    - tie -> default to Hindi (more common nationally), except if Marathi-only cues exist
-        margin = mr_score - hi_score
         if mr_score >= hi_score + 2:
             return "mr"
         if hi_score >= mr_score + 2:
             return "hi"
 
-        # soft ties — check for Marathi “giveaways”
-        if any(g in s for g in ("वाढवणारे", "रोग प्रतिकार शक्ती", "रोगप्रतिकारक")):
+        # soft ties — Marathi giveaways
+        if any(g in s for g in ("वाढवणारे", "रोग प्रतिकार शक्ती", "रोगप्रतिकारक", "साठी", "कडून", "कडे", "होईल", "करतो")):
             return "mr"
 
         # final tie-break: prefer Hindi
         return "hi"
 
-    def _select_route(
-        self, src_lang: str, tgt_lang: str
-    ) -> tuple[IndicTranslator, str, str]:
+    def _select_route(self, src_lang: str, tgt_lang: str) -> tuple[IndicTranslator, str, str]:
         src = src_lang.lower()
         tgt = tgt_lang.lower()
         src_tag = _lang_tag(src_lang)
