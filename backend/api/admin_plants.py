@@ -6,6 +6,9 @@ from datetime import datetime
 import os, json, sqlite3
 from sqlite_vec import serialize_float32
 from sentence_transformers import SentenceTransformer
+from services.admin_i18n_indexer import admin_save_with_i18n
+
+
 model = SentenceTransformer("all-MiniLM-L6-v2")   # cache globally
 
 from db import get_db
@@ -145,10 +148,10 @@ def admin_create_plant():
         payload = _coerce_payload(data)
         # enforce uniqueness on botanical_name
         db = get_db()
-        exists = db.execute("SELECT id FROM plants WHERE lower(botanical_name)=lower(?)",
-                            (payload["botanical_name"],)).fetchone()
+        exists = db.execute("SELECT id FROM plants WHERE lower(botanical_name)=lower(?) OR lower(common_name_en)=lower(?)",
+                            (payload["botanical_name"], payload["common_name_en"])).fetchone()
         if exists:
-            return jsonify({"error": "botanical_name already exists"}), 409
+            return jsonify({"error": "botanical_name or common_name_en already exists"}), 409
 
         cols = ", ".join(payload.keys())
         qs = ", ".join(["?"] * len(payload))
@@ -157,6 +160,21 @@ def admin_create_plant():
 
         new_id = db.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
         row = db.execute("SELECT * FROM plants WHERE id=?", (new_id,)).fetchone()
+
+        # Handle i18n fields and FTS indexing
+        admin_save_with_i18n(
+            entity_type="plant",
+            entity_id=new_id,
+            en_fields={
+                "name": data.get("common_name_en"),
+                "description": data.get("description_en"),
+                "parts_used": data.get("parts_used_en"),
+                "benefits": data.get("benefits_en"),
+                "dosage": data.get("dosage_en"),
+                "precautions": data.get("precautions_en"),
+            },
+        )
+
         return jsonify(_row_to_obj(row)), 201
     except Exception as e:
         print("Create plant error:", e)
@@ -188,6 +206,19 @@ def admin_update_plant(plant_id: int):
     if cur.rowcount == 0:
         return jsonify({"error": "Not found"}), 404
     db.commit()
+
+    admin_save_with_i18n(
+            entity_type="plant",
+            entity_id=plant_id,
+            en_fields={
+                "name": data.get("common_name_en"),
+                "description": data.get("description_en"),
+                "parts_used": data.get("parts_used_en"),
+                "benefits": data.get("benefits_en"),
+                "dosage": data.get("dosage_en"),
+                "precautions": data.get("precautions_en"),
+            },
+        )
 
     row = db.execute("SELECT * FROM plants WHERE id=?", (plant_id,)).fetchone()
     return jsonify(_row_to_obj(row))

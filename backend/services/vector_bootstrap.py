@@ -208,20 +208,34 @@ def ensure_vector_indexes(force_full: bool = False) -> Dict[str, int]:
     """
     Ensure that disease_vec, plant_vec, and prep_vec exist and contain
     embeddings aligned with the master tables.
+
+    Returns:
+      - diseases/plants/preparations: total rows currently present in vec tables
+      - diseases_rebuilt/plants_rebuilt/preparations_rebuilt: rows rebuilt this run
     """
-    stats: Dict[str, int] = {"diseases": 0, "plants": 0, "preparations": 0}
     db = get_db()
     try:
+        rebuilt = {"diseases": 0, "plants": 0, "preparations": 0}
+
         if force_full or _needs_rebuild(db, "disease_vec", "diseases"):
-            stats["diseases"] = _rebuild_disease_index(db)
+            rebuilt["diseases"] = _rebuild_disease_index(db)
         if force_full or _needs_rebuild(db, "plant_vec", "plants"):
-            stats["plants"] = _rebuild_plant_index(db)
+            rebuilt["plants"] = _rebuild_plant_index(db)
         if force_full or _needs_rebuild(db, "prep_vec", "preparations"):
-            stats["preparations"] = _rebuild_prep_index(db)
+            rebuilt["preparations"] = _rebuild_prep_index(db)
+
+        # True readiness = counts that exist now
+        totals = {
+            "diseases": db.execute("SELECT COUNT(*) FROM disease_vec").fetchone()[0],
+            "plants": db.execute("SELECT COUNT(*) FROM plant_vec").fetchone()[0],
+            "preparations": db.execute("SELECT COUNT(*) FROM prep_vec").fetchone()[0],
+            "diseases_rebuilt": rebuilt["diseases"],
+            "plants_rebuilt": rebuilt["plants"],
+            "preparations_rebuilt": rebuilt["preparations"],
+        }
+        return totals
     finally:
         db.close()
-    return stats
-
 
 def rebuild_all_indexes() -> Dict[str, int]:
     """

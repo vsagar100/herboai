@@ -2,6 +2,7 @@ import sqlite3
 import sqlite_vec
 from sqlite_vec import load as load_sqlite_vec
 from flask import current_app, g, Flask
+from typing import Optional, List, Dict
 
 PRAGMAS = [
     ("PRAGMA foreign_keys = ON", ()),
@@ -9,35 +10,47 @@ PRAGMAS = [
     ("PRAGMA synchronous = NORMAL", ()),
 ]
 
-_VEC_TABLE_SQL = (
-    """
-    CREATE VIRTUAL TABLE IF NOT EXISTS disease_vec USING vec0(
-        disease_id INTEGER PRIMARY KEY,
-        name_en TEXT,
-        embedding FLOAT[384]
-    )
-    """,
-    """
-    CREATE VIRTUAL TABLE IF NOT EXISTS plant_vec USING vec0(
-        plant_id INTEGER PRIMARY KEY,
-        name_en TEXT,
-        embedding FLOAT[384]
-    )
-    """,
-    """
-    CREATE VIRTUAL TABLE IF NOT EXISTS prep_vec USING vec0(
-        preparation_id INTEGER PRIMARY KEY,
-        name_en TEXT,
-        embedding FLOAT[384]
-    )
-    """,
+# -----------------------------------------------------------------------------
+# sqlite-vec: per-language vector tables (strict retrieval in user language)
+# -----------------------------------------------------------------------------
+
+_LANGS = ("en", "hi", "mr")
+
+def _vec_table_sql() -> tuple[str, ...]:
+    # Keep 384-dim to match existing embedding function used in your codebase
+    stmts: list[str] = []
+    for lang in _LANGS:
+        stmts.append(f"""
+        CREATE VIRTUAL TABLE IF NOT EXISTS disease_vec_{lang} USING vec0(
+            disease_id INTEGER PRIMARY KEY,
+            name TEXT,
+            embedding FLOAT[384]
+        )
+        """)
+        stmts.append(f"""
+        CREATE VIRTUAL TABLE IF NOT EXISTS plant_vec_{lang} USING vec0(
+            plant_id INTEGER PRIMARY KEY,
+            name TEXT,
+            embedding FLOAT[384]
+        )
+        """)
+        stmts.append(f"""
+        CREATE VIRTUAL TABLE IF NOT EXISTS prep_vec_{lang} USING vec0(
+            preparation_id INTEGER PRIMARY KEY,
+            name TEXT,
+            embedding FLOAT[384]
+        )
+        """)
+    return tuple(stmts)
+
+_VEC_TABLE_SQL = _vec_table_sql()
+
+_VEC_BASE_TABLES = tuple(
+    f"{base}_vec_{lang}"
+    for lang in _LANGS
+    for base in ("disease", "plant", "prep")
 )
 
-_VEC_BASE_TABLES = (
-    "disease_vec",
-    "plant_vec",
-    "prep_vec",
-)
 
 _vec_tables_ready = False
 _vec_cleanup_done = False
@@ -108,6 +121,77 @@ def _cleanup_legacy_vec_tables(conn: sqlite3.Connection) -> None:
     if changed:
         conn.commit()
     _vec_cleanup_done = True
+
+
+def resolve_disease_id(conn: sqlite3.Connection, disease_text_en: str) -> Optional[int]:
+    q = (disease_text_en or "").strip().lower()
+    if not q:
+        return None
+
+    row = conn.execute(
+        "SELECT id FROM diseases WHERE LOWER(name_en)=? LIMIT 1",
+        (q,),
+    ).fetchone()
+    if row:
+        return int(row["id"])
+
+    row = conn.execute(
+        "SELECT disease_id FROM disease_synonyms WHERE LOWER(synonym)=? LIMIT 1",
+        (q,),
+    ).fetchone()
+    if row:
+        return int(row["disease_id"])
+
+    like = f"%{q}%"
+    row = conn.execute(
+        "SELECT id FROM diseases WHERE LOWER(name_en) LIKE ? ORDER BY id LIMIT 1",
+        (like,),
+    ).fetchone()
+    if row:
+        return int(row["id"])
+
+    row = conn.execute(
+        "SELECT disease_id FROM disease_synonyms WHERE LOWER(synonym) LIKE ? ORDER BY disease_id LIMIT 1",
+        (like,),
+    ).fetchone()
+    if row:
+        return int(row["disease_id"])
+
+    return None
+
+
+def fetch_preparations_for_disease(conn: sqlite3.Connection, disease_id: int, limit: int = 6) -> List[Dict]:
+    sql = """
+    WITH pd AS (
+      SELECT plant_id, efficacy_level, evidence_type
+      FROM plant_disease_mapping
+      WHERE disease_id = ?
+    )
+    SELECT
+      pr.id,
+      pr.name_en, pr.name_hi, pr.name_mr,
+      pr.classical_name,
+      pr.ayush_system,
+      pr.form_type, pr.category,
+      pr.preparation_steps, pr.equipment_needed,
+      pr.duration, pr.yield, pr.storage, pr.shelf_life,
+      pr.dosage_json, pr.timing, pr.anupana, pr.notes,
+      p.id AS plant_id,
+      p.botanical_name, p.common_name_en, p.common_name_hi, p.common_name_mr,
+      pd.efficacy_level, pd.evidence_type,
+      CASE WHEN pi.preparation_id IS NULL THEN 0 ELSE 1 END AS explicitly_indicated
+    FROM pd
+    JOIN plants p ON p.id = pd.plant_id
+    JOIN preparations pr ON pr.plant_id = pd.plant_id
+    LEFT JOIN preparation_indications pi
+      ON pi.preparation_id = pr.id AND pi.disease_id = ?
+    ORDER BY explicitly_indicated DESC,
+             COALESCE(pd.efficacy_level, 0) DESC,
+             pr.id DESC
+    LIMIT ?
+    """
+    rows = conn.execute(sql, (disease_id, disease_id, limit)).fetchall()
+    return [dict(r) for r in rows]
 
 
 def get_db():

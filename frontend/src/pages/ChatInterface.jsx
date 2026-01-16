@@ -263,7 +263,9 @@ export default function ChatInterface() {
   const HEADER_H = 84; // px
 
   const listRef = useRef(null);
-  const sessionId = useRef(`chat-${Date.now()}`).current;
+  //const sessionId = useRef(`chat-${Date.now()}`).current;
+  const [sessionId] = useState(() => crypto.randomUUID());
+
   const rafRef = useRef(null);
 
   // Download menu
@@ -386,9 +388,10 @@ export default function ChatInterface() {
     try {
       const { data } = await api.post(
         "/query",
-        { text: finalText, session_id: sessionId },
+        { text: finalText, session_id: sessionId, lang: state.language },
         { headers: { "x-session-id": sessionId } }
       );
+
 
       console.log("[/api/query] raw response:", data);
 

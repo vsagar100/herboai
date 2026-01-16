@@ -401,3 +401,9 @@ CREATE TABLE knowledge_chunks (
 );
 CREATE INDEX idx_kc_entity
   ON knowledge_chunks(entity_type, entity_id);
+CREATE INDEX idx_plants_ayush_system ON plants(ayush_system);
+CREATE INDEX idx_plants_common_name_en ON plants(common_name_en);
+CREATE INDEX idx_preparations_plant_id ON preparations(plant_id);
+CREATE INDEX idx_pdm_plant_id ON plant_disease_mapping(plant_id);
+CREATE INDEX idx_pdm_disease_id ON plant_disease_mapping(disease_id);
+CREATE UNIQUE INDEX ux_pdm_plant_disease ON plant_disease_mapping(plant_id, disease_id);

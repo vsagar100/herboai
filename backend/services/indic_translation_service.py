@@ -319,3 +319,39 @@ def get_indic_translation_service() -> IndicTranslationService:
     if _SERVICE is None:
         _SERVICE = IndicTranslationService()
     return _SERVICE
+
+# -----------------------------------------------------------------------------
+# Public convenience wrappers (stable API)
+# -----------------------------------------------------------------------------
+
+def translate_to_en(text: str, src_lang: str | None = None, lang_hint: str | None = None) -> str:
+    """
+    Translate any supported language to English.
+    - If src_lang is provided, it's used directly.
+    - Else we detect language (optionally influenced by lang_hint).
+    """
+    svc = get_indic_translation_service()
+    if src_lang:
+        return svc.translate_text(text, src_lang, "en")
+    # detect_lang accepts lang_hint already
+    detected = svc.detect_lang(text, lang_hint=lang_hint)
+    return text if detected == "en" else svc.translate_text(text, detected, "en")
+
+
+def translate_from_en(text: str, tgt_lang: str) -> str:
+    """
+    Translate English to target language (en/hi/mr).
+    """
+    svc = get_indic_translation_service()
+    tgt = (tgt_lang or "en").lower()
+    return text if tgt == "en" else svc.translate_text(text, "en", tgt)
+
+
+def translate_en_to_hi(text: str) -> str:
+    svc = get_indic_translation_service()
+    return svc.translate_text(text, "en", "hi")
+
+
+def translate_en_to_mr(text: str) -> str:
+    svc = get_indic_translation_service()
+    return svc.translate_text(text, "en", "mr")

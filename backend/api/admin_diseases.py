@@ -7,6 +7,8 @@ import re
 import json
 
 from db import get_db
+from services.admin_i18n_indexer import admin_save_with_i18n
+
 
 admin_diseases_bp = Blueprint("admin_diseases", __name__)
 
@@ -220,6 +222,19 @@ def create_disease():
     db.execute(f"INSERT INTO diseases ({cols}) VALUES ({qs})", tuple(payload.values()))
     db.commit()
     new_id = db.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+
+    admin_save_with_i18n(
+        entity_type="disease",
+        entity_id=new_id,
+        en_fields={
+            "name": data.get("name_en"),
+            "description": data.get("description_en"),
+            "symptoms": data.get("symptoms_en"),
+            "causes": data.get("causes_en"),
+            "precautions": data.get("precautions_en"),
+        },
+    )
+
     row = db.execute("SELECT * FROM diseases WHERE id=?", (new_id,)).fetchone()
     return jsonify(_row_to_obj(row)), 201
 
@@ -253,6 +268,19 @@ def update_disease(disease_id: int):
             return jsonify({"error": "Not found"}), 404
 
         db.commit()
+
+        admin_save_with_i18n(
+        entity_type="disease",
+        entity_id=disease_id,
+        en_fields={
+            "name": data.get("name_en"),
+            "description": data.get("description_en"),
+            "symptoms": data.get("symptoms_en"),
+            "causes": data.get("causes_en"),
+            "precautions": data.get("precautions_en"),
+        },
+    )
+
         row = db.execute("SELECT * FROM diseases WHERE id=?", (disease_id,)).fetchone()
         return jsonify(_row_to_obj(row))
     except Exception as e:

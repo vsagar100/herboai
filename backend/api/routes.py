@@ -273,7 +273,8 @@ def query():
         return {"error": "Empty text"}, 400
     
     try:
-        result = run_pipeline(user_text=user_text, session_id=session_id)
+        lang = data.get("lang")
+        result = run_pipeline(user_text=user_text, session_id=session_id, lang=lang)
         
         # Transform to match frontend expectations from ChatInterface.jsx
         # Frontend expects: {answer, intent, structured: {plants, disease, plant}, ...}

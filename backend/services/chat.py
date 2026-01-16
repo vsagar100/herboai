@@ -3,17 +3,20 @@ import time, logging
 import json
 import math
 import os
+import re
+import uuid
 from typing import Dict, Any, List, Optional
 from sentence_transformers import SentenceTransformer
 from sqlite_vec import serialize_float32
 import numpy as np
 
-from db import get_db
+from db import get_db, fetch_preparations_for_disease, resolve_disease_id
 from api.nlu_optimized import detect_language, classify_intent, extract_entities
 from services.async_translator import get_async_translator
 from services.indic_translation_service import get_indic_translation_service
 from services.response_builder import (
     build_generic_answer,
+    build_hybrid_response,
     build_no_data_answer,
     build_plant_answer,
     build_remedy_answer,
@@ -25,13 +28,24 @@ from services.llm_gateway import generate_herboai_answer
 from api.context import get_last_context, persist_turn
 from semantic import top_plants_for_disease, top_preparations_for_disease, ingredients_for_preparation
 
+from services.severity import assess_severity
+from services.followups import generate_followup_questions
+from services.indic_translation_service import translate_to_en, translate_from_en
+from repositories.search_repo import (
+    vector_search_preparations_lang,
+    hydrate_preparations,
+    rank_preparations,
+)
+from utils.i18n import normalize_lang
+
+
 log = logging.getLogger("pipeline")
 
 
 # Global embedding model (lazy loaded)
 _EMB_MODEL = None
 _SENTENCE_MODEL_NAME = os.getenv("SENTENCE_MODEL_NAME", "all-MiniLM-L6-v2")
-_SENTENCE_MODEL_CACHE = os.getenv("SENTENCE_MODEL_CACHE")  # e.g., /data/models/sentencetransformers
+_SENTENCE_MODEL_CACHE = os.getenv("SENTENCE_MODEL_CACHE", "D:\herboai\backend\models")  # e.g., /data/models/sentencetransformers
 
 def warmup_pipeline():
     """
@@ -538,7 +552,6 @@ def _fetch_knowledge_chunk(chunk_id: int) -> Optional[Dict[str, Any]]:
     # embedding is left as bytes; we only decode when needed
     return row
 
-
 def _search_knowledge_chunks(
     query: str,
     plants_full: List[Dict[str, Any]],
@@ -766,373 +779,678 @@ def _chunks_to_context(chunks: List[Dict[str, Any]]) -> str:
 # MAIN PIPELINE
 # ============================================================================
 
-def run_pipeline(user_text: str, session_id: str | None) -> Dict[str, Any]:
+# -----------------------------------------------------------------------------
+# Conversation state for follow-up Q/A (in-memory; good for single-user/dev)
+# -----------------------------------------------------------------------------
+
+_SESSION_TTL_SEC = 60 * 30  # 30 minutes
+_SESSIONS: Dict[str, Dict[str, Any]] = {}
+
+_SLOT_KEYS = ("duration", "trend", "pain_fever_severity", "age_gender", "existing_illness")
+
+def _now() -> float:
+    return time.time()
+
+def _gc_sessions() -> None:
+    cutoff = _now() - _SESSION_TTL_SEC
+    dead = [sid for sid, s in _SESSIONS.items() if s.get("updated_at", 0) < cutoff]
+    for sid in dead:
+        _SESSIONS.pop(sid, None)
+
+def _get_session(session_id: Optional[str]) -> Dict[str, Any]:
+    _gc_sessions()
+    if not session_id:
+        session_id = str(uuid.uuid4())
+    sess = _SESSIONS.get(session_id)
+    if not sess:
+        sess = {
+            "id": session_id,
+            "stage": "new",        # new | collecting | ready
+            "slots": {},
+            "last_q": None,
+            "lang": None,
+            "updated_at": _now(),
+        }
+        _SESSIONS[session_id] = sess
+    sess["updated_at"] = _now()
+    return sess
+
+def _classify_condition(text: str) -> str:
+    t = (text or "").lower()
+    if any(x in t for x in ("diabetes", "मधुमेह", "मधुमेहा", "sugar")):
+        return "diabetes"
+    if any(x in t for x in ("hypertension", "bp", "blood pressure", "उच्च रक्तदाब", "दाब")):
+        return "hypertension"
+    if any(x in t for x in ("cold", "cough", "sore throat", "जुकाम", "खोकला", "कफ")):
+        return "cold_cough"
+    if any(x in t for x in ("acidity", "gas", "indigestion", "अम्लपित्त", "गॅस", "अपचन")):
+        return "digestion"
+    if any(x in t for x in ("arthritis", "joint pain", "संधिवात", "गुडघा दुखी")):
+        return "arthritis"
+    return "general"
+
+_CONDITION_SLOTS = {
+    "diabetes": ("duration", "age_gender", "trend", "meds", "sugar_values"),
+    "hypertension": ("duration", "age_gender", "trend", "meds", "bp_values"),
+    "cold_cough": ("duration", "trend", "pain_fever_severity", "age_gender", "existing_illness"),
+    "digestion": ("duration", "trend", "severity", "age_gender", "existing_illness"),
+    "arthritis": ("duration", "trend", "severity", "age_gender", "existing_illness"),
+    "general": ("duration", "trend", "pain_fever_severity", "age_gender", "existing_illness"),
+}
+
+# Required slots per condition (must be filled before "full guidance")
+_CONDITION_REQUIRED = {
+    "diabetes": ("duration", "age_gender", "trend"),
+    "hypertension": ("duration", "age_gender", "trend"),
+    "cold_cough": ("duration", "trend", "pain_fever_severity", "age_gender"),
+    "digestion": ("duration", "trend", "severity", "age_gender"),
+    "arthritis": ("duration", "trend", "severity", "age_gender"),
+    "general": ("duration", "trend", "age_gender"),
+}
+
+# Optional slots (nice to have, NEVER block remedies)
+_CONDITION_OPTIONAL = {
+    "diabetes": ("meds", "sugar_values"),
+    "hypertension": ("meds", "bp_values"),
+    "cold_cough": ("existing_illness",),
+    "digestion": ("existing_illness",),
+    "arthritis": ("existing_illness",),
+    "general": ("existing_illness",),
+}
+
+
+def _missing_required(sess: Dict[str, Any]) -> list[str]:
+    slots = sess.get("slots", {})
+    cond = sess.get("condition") or "general"
+    required = _CONDITION_REQUIRED.get(cond, _CONDITION_REQUIRED["general"])
+    return [k for k in required if k not in slots]
+
+def _missing_optional(sess: Dict[str, Any]) -> list[str]:
+    slots = sess.get("slots", {})
+    cond = sess.get("condition") or "general"
+    optional = _CONDITION_OPTIONAL.get(cond, ())
+    return [k for k in optional if k not in slots]
+
+def _slot_questions(condition: str | None, missing: list[str]) -> list[str]:
+    qmap = {
+        "duration": "Since when (days/months/years)?",
+        "trend": "Is it getting better or worse?",
+        "pain_fever_severity": "Any fever/pain severity (none / mild / moderate / severe)?",
+        "severity": "Severity (mild / moderate / severe)?",
+        "age_gender": "Age and gender?",
+        "existing_illness": "Any existing illness (BP/thyroid/asthma etc.)?",
+        "meds": "Are you currently taking any medicines? (name if possible)",
+        "sugar_values": "Do you know your recent fasting/PP sugar or HbA1c? (optional)",
+        "bp_values": "Do you know your recent BP readings? (optional)",
+    }
+
+    # diabetes/hypertension should not ask fever
+    return [qmap[m] for m in missing if m in qmap]
+
+
+def _extract_slots(text: str) -> Dict[str, str]:
     """
-    Optimized multilingual RAG pipeline:
-    1. Detect language & intent (fast)
-    2. Extract entities with FTS + vector fallback
-    3. Build knowledge context
-    4. Deterministic answer + translation (no external LLM yet)
-    5. Return structured result
+    Very lightweight slot extraction. Works well for your current UI.
     """
-    t0 = time.perf_counter()
-    
-    # Step 1: Language detection (no translation yet)
-    lang = detect_language(user_text)
-    print(f"[Pipeline] Language: {lang}")
-    translator = None
-    t1 = time.perf_counter()
-    async_tx = get_async_translator()
-    t2 = time.perf_counter()
-    # Step 2: Translate ONLY for intent classification (internal routing)
-    # Keep best-effort: if the heavy model is still loading, skip to avoid blocking.
-    text_for_intent = user_text
-    t3=t4=t5=0
-    if lang != "en":
-        if async_tx.is_ready():
-            try:
-                t3 = time.perf_counter()
-                translator = get_indic_translation_service()
-                t4 = time.perf_counter()
-                text_for_intent = translator.to_en(user_text, src_lang=lang)
-                t5 = time.perf_counter()
-                print(f"[Translate] Query -> EN (intent): {text_for_intent}")
-            except Exception as exc:
-                print(f"[Translate] Skipping intent translation: {exc}")
-        else:
-            t3 = time.perf_counter()
-            async_tx.warmup()
-            t4 = time.perf_counter()
-            print("[Translate] Translator warming up; using original text for intent")
-            t5 = time.perf_counter()
-    t6 = time.perf_counter()
-    intent = classify_intent(text_for_intent)
-    print(f"[Pipeline] Intent: {intent} (text_for_intent={text_for_intent})")
-        # Heuristic override: if user is clearly asking "how to prepare / kadha / decoction / churna"
-    # then treat this as preparation_info regardless of what the classifier said.
-    if is_preparation_like_query(user_text, text_for_intent):
-        print("[Heuristic] Overriding intent -> preparation_info (prep-like query)")
-        intent = "preparation_info"
+    t = (text or "").strip().lower()
+    slots: Dict[str, str] = {}
 
-    
-    # Step 3: Entity extraction (works on original multilingual query)
-    plants, diseases = extract_entities(user_text, text_for_intent, prefer_en=(lang != "en"))
-    print(f"[Pipeline] Found {len(plants)} plants, {len(diseases)} diseases (FTS)")
+    # duration: "2 years", "6 months", "10 days"
+    m = re.search(r"(\d+)\s*(year|years|yr|yrs|month|months|mo|mos|day|days|d)\b", t)
+    if m:
+        slots["duration"] = f"{m.group(1)} {m.group(2)}"
 
-    name_hint = text_for_intent or user_text
-    plants = _prioritize_name_match(
-        plants, name_hint, ["common_name_en", "botanical_name", "synonym", "name"]
-    )
-    diseases = _prioritize_name_match(
-        diseases, name_hint, ["name_en", "name", "synonym"]
-    )
-    
-    # Step 4: Vector fallback if FTS didn't find anything
-    if not diseases:
-        vec_diseases = _search_similar_vec("disease_vec", "disease_id", user_text, 3)
-        vec_diseases = _prune_vec_hits(vec_diseases, 1.8)  # Tune threshold
-        print(f"[Pipeline] Found {len(vec_diseases)} diseases (vector)")
-        diseases = vec_diseases
-    
-    if not plants:
-        vec_plants = _search_similar_vec("plant_vec", "plant_id", user_text, 3)
-        vec_plants = _prune_vec_hits(vec_plants, 1.8)
-        print(f"[Pipeline] Found {len(vec_plants)} plants (vector)")
-        plants = vec_plants
-    
-    # Step 5: Hydrate entities (fetch full records if we only have IDs)
-    plants_full: List[Dict[str, Any]] = []
-    for p in plants[:3]:  # Limit to top 3
-        if "botanical_name" in p and p.get("botanical_name"):
-            plants_full.append(p)
-        elif "id" in p:
-            full = _fetch_plant_full(p["id"])
-            if full:
-                plants_full.append(full)
-    
-    diseases_full: List[Dict[str, Any]] = []
-    for d in diseases[:3]:
-        if "name_en" in d and d.get("name_en"):
-            diseases_full.append(d)
-        elif "id" in d:
-            full = _fetch_disease_full(d["id"])
-            if full:
-                diseases_full.append(full)
-    
-    # Step 6: Context recall from conversation
-        # Step 6: Context recall from conversation
-    last = get_last_context(session_id) if session_id else None
-    if not diseases_full and last and last.get("entities", {}).get("diseases"):
-        diseases_full = last["entities"]["diseases"][:2]
-    if not plants_full and last and last.get("entities", {}).get("plants"):
-        plants_full = last["entities"]["plants"][:2]
+    # trend
+    if any(w in t for w in ("better", "improving", "improved")):
+        slots["trend"] = "better"
+    elif any(w in t for w in ("worse", "worsening", "getting worse")):
+        slots["trend"] = "worse"
+    elif "same" in t or "no change" in t:
+        slots["trend"] = "same"
 
-    # Heuristic: if the query text implies "for <condition>" and we found diseases,
-    # prefer remedy_lookup even if the classifier leaned plant_info.
-    text_lower = (text_for_intent or user_text).lower()
-    if intent != "remedy_lookup" and diseases_full:
-        if any(needle in text_lower for needle in [" साठी", "साठी", "के लिए", "for "]):
-            intent = "remedy_lookup"
+    # severity
+    if "severe" in t:
+        slots["pain_fever_severity"] = "severe"
+    elif "moderate" in t:
+        slots["pain_fever_severity"] = "moderate"
+    elif "mild" in t:
+        slots["pain_fever_severity"] = "mild"
 
-    # >>> NEW: re-prioritize hydrated entities based on the actual names <<<
-    name_hint = text_for_intent or user_text
+    if "no fever" in t or "without fever" in t or "afebrile" in t:
+        slots["pain_fever_severity"] = "none"
+    if "no pain" in t or "without pain" in t:
+        slots.setdefault("pain_fever_severity", "none")
 
-    if plants_full:
-        plants_full = _prioritize_name_match(
-            plants_full,
-            name_hint,
-            [
-                "common_name_en",
-                "botanical_name",
-                "common_name_hi",
-                "common_name_mr",
-                "sanskrit_name",
-                "synonym",
-                "name",
-            ],
-        )
+    # meds
+    if "metformin" in t or "insulin" in t or "glimepiride" in t or "gliclazide" in t:
+        slots["meds"] = "mentioned"
+    if "no medicine" in t or "not taking" in t:
+        slots["meds"] = "none"
 
-    if diseases_full:
-        diseases_full = _prioritize_name_match(
-            diseases_full,
-            name_hint,
-            [
-                "name_en",
-                "name_hi",
-                "name_mr",
-                "ayurvedic_name",
-                "synonym",
-                "name",
-            ],
-        )
+    # sugar values hints
+    if "hba1c" in t:
+        slots["sugar_values"] = "provided"
+    if "fasting" in t or "pp" in t or "postprandial" in t:
+        slots["sugar_values"] = "provided"
 
-    print(f"[Pipeline] After hydration: {len(plants_full)} plants, {len(diseases_full)} diseases")
-    # Step 6.5: Retrieve knowledge chunks for RAG (based on entities + query)
-    rag_query_text = text_for_intent or user_text
-    rag_chunks = _search_knowledge_chunks(rag_query_text, plants_full, diseases_full, k=5)
+    # bp values hints
+    if re.search(r"\b\d{2,3}\s*/\s*\d{2,3}\b", t):
+        slots["bp_values"] = "provided"
 
-    # Step 7: Deterministic, chat-style response generation (no external LLM yet)
-    
-    structured: Dict[str, Any] = {}
-    fallback_answer_en = ""
 
-    # --- 7A: Preparation-info should be PLANT-centric when a plant is clear ---
-    if intent == "preparation_info":
-        if plants_full:
-            plant = plants_full[0]
-            preps = _preparations_for_plant(plant["id"], k=5)
-            structured = {
-                "plant": plant,
-                "preparations": preps,
-            }
-            fallback_answer_en = _build_plant_preparation_answer(plant, preps)
-        elif diseases_full:
-            # Fallback: if user asked "how to prepare decoction for <disease>"
-            disease_row = diseases_full[0]
-            structured = {
-                "disease": disease_row,
-                "plants": top_plants_for_disease(disease_row["id"], k=5),
-                "preparations": top_preparations_for_disease(disease_row["id"], k=3),
-            }
-            fallback_answer_en = build_remedy_answer(
-                disease_row,
-                structured["plants"],
-                structured["preparations"],
-            )
-        else:
-            structured = {}
-            fallback_answer_en = build_no_data_answer(user_text)
-
-    # --- 7B: Disease-centric remedy lookup ---
-    elif intent == "remedy_lookup" and diseases_full:
-        disease_row = diseases_full[0]
-        structured = {
-            "disease": disease_row,
-            "plants": top_plants_for_disease(disease_row["id"], k=5),
-            "preparations": top_preparations_for_disease(disease_row["id"], k=3),
-        }
-        answer_text_en = build_remedy_answer(
-            disease_row,
-            structured["plants"],
-            structured["preparations"],
-        )
-
-    # --- 7C: Pure plant information ---
-    elif intent == "plant_info" and plants_full:
-        plant = plants_full[0]
-        structured = {
-            "plant": plant,
-            "plants": [plant],
-        }
-        answer_text_en = build_plant_answer(plant)
-
-    # --- 7D: Generic “I found some plants/diseases” answer ---
-    elif plants_full or diseases_full:
-        structured = {
-            "plants": plants_full,
-            "diseases": diseases_full,
-        }
-        answer_text_en = build_generic_answer(plants_full, diseases_full)
-
-    # --- 7E: No entities at all ---
+    # age + gender (simple patterns)
+    # e.g. "age 35 male", "35M", "female 28"
+    m = re.search(r"\b(\d{1,3})\s*(m|male|f|female)\b", t)
+    if m:
+        slots["age_gender"] = f"{m.group(1)} {m.group(2)}"
     else:
-        structured = {}
-        answer_text_en = build_no_data_answer(user_text)
-    
-    # ----- Step 7.5: Optional LLM-based RAG answer (v2 pipeline) -----
-    use_llm = os.getenv("HERBOAI_USE_LLM", "1") == "1"
-    answer_text_en = fallback_answer_en  # default
+        m = re.search(r"\b(age\s*)?(\d{1,3})\b", t)
+        if m and any(w in t for w in ("male", "female", "man", "woman", "m", "f")):
+            g = "male" if "male" in t or "man" in t or re.search(r"\b\d+\s*m\b", t) else "female"
+            slots["age_gender"] = f"{m.group(2)} {g}"
 
+    # existing illness
+    illness_hits = []
+    for k in ("bp", "blood pressure", "diabetes", "thyroid", "asthma", "heart", "kidney", "liver"):
+        if k in t:
+            illness_hits.append(k)
+    if illness_hits:
+        slots["existing_illness"] = ", ".join(sorted(set(illness_hits)))
+
+    return slots
+
+def _detect_lang_stable(user_text: str, lang: str | None) -> str:
+    # respect explicit lang, otherwise detect
+    if lang:
+        return normalize_lang(lang)
     try:
-        if use_llm:
-            # Context from entities/preparations
-            base_context = build_herboai_context(
-                plants_full,
-                diseases_full,
-                structured.get("preparations", []),
-            )
-            # Add RAG chunks (if any)
-            chunk_ctx = _chunks_to_context(rag_chunks)
-            full_context = base_context
-            if chunk_ctx:
-                full_context = (base_context + "\n\n" + chunk_ctx) if base_context else chunk_ctx
-
-            print("[HerboAI LLM] Calling model with RAG context...")
-            answer_text_en = generate_herboai_answer(
-                system_prompt=HERBOAI_SYSTEM_PROMPT,
-                user_query_en=rag_query_text,
-                context=full_context,
-            )
-            print("[HerboAI LLM] Answer generated via LLM.")
-        else:
-            print("[HerboAI LLM] Skipped (HERBOAI_USE_LLM != 1); using fallback template answer.")
-    except Exception as e:
-        logging.exception("[HerboAI LLM] Error; falling back to deterministic answer.")
-        answer_text_en = fallback_answer_en
-
-    # Also expose chunks in structured payload so UI can show sources later if needed
-    if rag_chunks:
-        structured["knowledge_chunks"] = [
-            {
-                "id": c["id"],
-                "entity_type": c["entity_type"],
-                "entity_id": c["entity_id"],
-                "section": c["section"],
-                "content": c["content"],
-                "source": c["source"],
-                "score": c["score"],
-            }
-            for c in rag_chunks
-        ]
+        return normalize_lang(detect_language(user_text))
+    except Exception:
+        return "en"
 
 
+def _text_for_intent(user_text: str, lang: str) -> str:
+    if lang == "en":
+        return user_text
+    try:
+        return translate_to_en(user_text, lang_hint=lang)
+    except Exception:
+        return user_text
 
-    # Light conversational wrapper so it feels like an AI guide
-    if answer_text_en:
-        if intent == "plant_info":
-            prefix = "Here is an Ayurvedic overview based on your question:\n\n"
-        elif intent in ("remedy_lookup", "preparation_info"):
-            prefix = (
-                "Based on classical Ayurvedic references in the knowledge base, "
-                "here is a concise guideline:\n\n"
-            )
-        else:
-            prefix = ""
-        if prefix:
-            answer_text_en = prefix + answer_text_en
 
-    print(f"[Pipeline] Answer (en): {answer_text_en}")
-    t7 =0
-    t8=0
-    t9=0
-    t10=0
-    t11=0
-    t12=0
-    answer_text = answer_text_en
-    structured_local = structured
-    if lang != "en":
-        translated = None
+def _extract_plant_term(user_text_en: str, entities: dict | None) -> str | None:
+    # best: NLU entities
+    if isinstance(entities, dict):
+        for key in ("plant", "plant_name", "herb", "entity"):
+            v = entities.get(key)
+            if isinstance(v, str) and v.strip():
+                return v.strip().lower()
+            if isinstance(v, list) and v:
+                if isinstance(v[0], str) and v[0].strip():
+                    return v[0].strip().lower()
 
-        # First, try async with a short timeout
-        try:
-            t7 = time.perf_counter()
-            translated = async_tx.translate_async(
-                answer_text_en, lang, timeout=3000, warm_timeout=8
-            )
-            t8 = time.perf_counter()
-        except Exception as exc:  # pragma: no cover - runtime failure guard
-            print(f"[Translation] Async worker error: {exc}")
+    # fallback: pick last meaningful token (works for "tulsi preparation")
+    toks = _simple_tokens(user_text_en)
+    return toks[-1].lower() if toks else None
 
-        # If async timed out/failed, fall back to sync translate (model should be warm by now)
-        if not translated:
-            try:                
-                translator = translator or get_indic_translation_service()
-                t9 = time.perf_counter()
-                translated = translator.translate_text(answer_text_en, "en", lang)
-                t10 = time.perf_counter()
-                print("[Translation] Used sync translator after async timeout")
-            except Exception as exc:
-                print(f"[Translation] Sync fallback failed: {exc}")
 
-        if translated:
-            answer_text = translated
-            print(f"[Translation] Answer ({lang}): {answer_text}")
-            try:
-                translator = translator or get_indic_translation_service()
-                t11 = time.perf_counter()
-                if structured and os.getenv("TRANSLATE_STRUCTURED_JSON", "0") == "1":
-                    print("[Translation] Translating structured payload.")
-                    structured_local = translator.translate_values(structured, "en", lang)
-                    print("[Translation] Structured payload translated")
-                else:
-                    structured_local = structured
-                    print("[Translation] Skipped structured payload translation")
-                t12 = time.perf_counter()
-            except Exception as exc:
-                print(f"[Translation] Structured fallback: {exc}")
-                structured_local = structured
-        else:
-            print("[Translation] Falling back to English response (timeout or error)")
-    else:
-        print("[Translation] Skipped; language is en")
+def _find_plant_id_by_name(plant_term_en: str) -> int | None:
+    if not plant_term_en:
+        return None
+    db = get_db()
+    term = plant_term_en.strip().lower()
 
-    # Step 8: Persist conversation
-    entities_dump = {
-        "plants": plants_full,
-        "diseases": diseases_full
-    }
+    row = db.execute(
+        """
+        SELECT id
+        FROM plants
+        WHERE LOWER(common_name_en)=?
+           OR LOWER(botanical_name)=?
+           OR LOWER(common_name_hi)=?
+           OR LOWER(common_name_mr)=?
+        LIMIT 1
+        """,
+        (term, term, term, term),
+    ).fetchone()
+    if row:
+        return int(row["id"]) if isinstance(row, dict) else int(row[0])
 
-    duration_ms = int((time.time() - t0) * 1000)
-    persist_turn(
-        session_id or "default",
-        user_text,
-        lang,
-        intent,
-        entities_dump,
-        answer_text,
-        structured_local,
-        duration_ms
-    )
-    print(f"[Pipeline] Complete in {duration_ms}ms")
+    # fallback LIKE (safer but limited)
+    row = db.execute(
+        """
+        SELECT id
+        FROM plants
+        WHERE LOWER(common_name_en) LIKE ?
+           OR LOWER(botanical_name) LIKE ?
+        LIMIT 1
+        """,
+        (f"%{term}%", f"%{term}%"),
+    ).fetchone()
+    if row:
+        return int(row["id"]) if isinstance(row, dict) else int(row[0])
 
-    log.info("timings(s): detect_language=%.2f get_async_translator=%.2f other=%.2f "
-         "get_async_translator=%.2f translator.to_en=%.2f classify_intent=%.2f "
-         "async_tx.translate_async=%.2f get_indic_translation_service=%.2f "
-         "translator.translate_text=%.2f translate_values=%.2f total=%.2f",
-         t1-t0, t2-t1, t3-t2, t4-t3, t5-t4, t7-t5, t8-t7, t9-t8, t10-t9, 
-         (t11 - t10) if t10 != 0 else (t11 - t8), t12 - t0)
-    
-    return {
-        "answer": answer_text,
-        "intent": intent,
-        "detected_language": lang,
-        "structured": structured_local,
-        "metadata": {
+    return None
+
+
+def _missing_slots(sess: Dict[str, Any]) -> list[str]:
+    slots = sess.get("slots", {})
+    return [k for k in _SLOT_KEYS if k not in slots]
+
+def embed_query(text: str) -> bytes:
+    """
+    Stable embedding API used by the query pipeline.
+    Returns bytes compatible with sqlite-vec vec0 MATCH.
+    """
+    return _embed_384(text)
+
+def looks_new_query(text: str) -> bool:
+    t = (text or "").strip().lower()
+    # short answers should NEVER reset conversation
+    if len(t.split()) <= 4:
+        return False
+    return any(k in t for k in ("what helps", "remedy", "treatment", "how to", "?"))
+
+
+def handle_chat(user_text: str, session_id: str | None, lang: str | None = None) -> dict:
+    """
+    Fixed pipeline behavior:
+      - Plant/preparation intent is handled FIRST (no symptom followups).
+      - Disease/remedy intent returns DB-mapped preparations immediately.
+      - Symptom narrative can ask followups, but still returns provisional remedies.
+      - Never relies on disease name embedded in preparations table.
+    """
+    user_text = (user_text or "").strip()
+    if not user_text:
+        return {
+            "answer": "Please enter a query.",
+            "severity": {"band": "low", "red_flags": []},
+            "followups": [],
+            "provisional": [],
             "session_id": session_id,
-            "duration_ms": duration_ms,
-            "entities_found": {
-                "plants": len(plants_full),
-                "diseases": len(diseases_full)
-            }
         }
+
+    # -----------------------------
+    # Language: respect explicit; otherwise detect once and keep stable in session
+    # -----------------------------
+    sess = _get_session(session_id)
+    if lang:
+        lang = normalize_lang(lang)
+    else:
+        # prefer stable session language if already known
+        lang = normalize_lang(sess.get("lang") or detect_language(user_text))
+    sess["lang"] = lang
+    sess["last_q"] = user_text
+
+    # English text for intent/NER
+    text_en = user_text if lang == "en" else translate_to_en(user_text, lang_hint=lang)
+
+    # NLU
+    try:
+        intent = classify_intent(text_en)  # e.g. "plant", "preparation", "remedy", "disease", "symptom", ...
+    except Exception:
+        intent = None
+    try:
+        entities = extract_entities(text_en) or {}
+    except Exception:
+        entities = {}
+
+    # -----------------------------
+    # Severity (keep your safety)
+    # -----------------------------
+    sev = assess_severity(user_text)
+    if isinstance(sev, str):
+        sev = {"band": sev, "red_flags": []}
+
+    if sev.get("band") == "emergency":
+        msg_en = (
+            "⚠️ This may be serious.\n\n"
+            "Please seek immediate medical care. Herbal remedies are not advised for emergency symptoms."
+        )
+        msg = translate_from_en(msg_en, lang) if lang != "en" else msg_en
+        return {
+            "answer": msg,
+            "severity": sev,
+            "followups": [],
+            "provisional": [],
+            "session_id": sess["id"],
+        }
+
+    # -----------------------------
+    # Local helpers (keep changes contained inside handle_chat)
+    # -----------------------------
+    def _extract_plant_term(en_text: str, ent: dict) -> str | None:
+        # Try NLU entities first
+        if isinstance(ent, dict):
+            for k in ("plant", "plant_name", "herb", "ingredient", "entity"):
+                v = ent.get(k)
+                if isinstance(v, str) and v.strip():
+                    return v.strip().lower()
+                if isinstance(v, list) and v and isinstance(v[0], str) and v[0].strip():
+                    return v[0].strip().lower()
+
+        # Fallback: last meaningful token (works for "tulsi preparation")
+        toks = _simple_tokens(en_text)
+        return toks[-1].lower() if toks else None
+
+    def _find_plant_id(term: str | None) -> int | None:
+        if not term:
+            return None
+        db = get_db()
+        t = term.strip().lower()
+
+        row = db.execute(
+            """
+            SELECT id
+            FROM plants
+            WHERE LOWER(common_name_en)=?
+               OR LOWER(botanical_name)=?
+               OR LOWER(common_name_hi)=?
+               OR LOWER(common_name_mr)=?
+            LIMIT 1
+            """,
+            (t, t, t, t),
+        ).fetchone()
+        if row:
+            try:
+                return int(row["id"])
+            except Exception:
+                return int(row[0])
+
+        # LIKE fallback
+        row = db.execute(
+            """
+            SELECT id
+            FROM plants
+            WHERE LOWER(common_name_en) LIKE ?
+               OR LOWER(botanical_name) LIKE ?
+            LIMIT 1
+            """,
+            (f"%{t}%", f"%{t}%"),
+        ).fetchone()
+        if row:
+            try:
+                return int(row["id"])
+            except Exception:
+                return int(row[0])
+
+        return None
+
+    def _extract_disease_term(en_text: str, ent: dict) -> str:
+        # Prefer explicit entity
+        if isinstance(ent, dict):
+            for k in ("disease", "condition", "problem", "illness"):
+                v = ent.get(k)
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+                if isinstance(v, list) and v and isinstance(v[0], str) and v[0].strip():
+                    return v[0].strip()
+        # Fallback: use the condition classifier
+        return _classify_condition(user_text)
+
+    # -----------------------------
+    # ✅ 1) PREPARATION / RECIPE / "HOW TO MAKE" intent short-circuit
+    # -----------------------------
+    prep_like = is_preparation_like_query(user_text, text_en)
+    if prep_like or intent in ("preparation", "plant_preparation", "recipe", "how_to"):
+        plant_term = _extract_plant_term(text_en, entities)
+        plant_id = _find_plant_id(plant_term)
+
+        if not plant_id:
+            msg_en = "Please tell me the plant name for the preparation (e.g., Tulsi, Neem, Amla)."
+            msg = translate_from_en(msg_en, lang) if lang != "en" else msg_en
+            return {
+                "answer": msg,
+                "severity": sev,
+                "followups": [],
+                "provisional": [],
+                "session_id": sess["id"],
+            }
+
+        plant = _fetch_plant_full(plant_id) or {}
+        preps = _preparations_for_plant(plant_id, k=5)  # uses ingredient mapping
+
+        answer_en = _build_plant_preparation_answer(plant, preps)
+        answer = translate_from_en(answer_en, lang) if lang != "en" else answer_en
+
+        return {
+            "answer": answer,
+            "severity": sev,
+            "followups": [],
+            "provisional": preps,
+            "structured": {"intent": "preparation", "plant": plant, "preparations": preps},
+            "session_id": sess["id"],
+        }
+
+    # -----------------------------
+    # ✅ 2) PLANT INFO intent short-circuit
+    # -----------------------------
+    if intent in ("plant", "plant_info", "herb", "plant_identity"):
+        plant_term = _extract_plant_term(text_en, entities)
+        plant_id = _find_plant_id(plant_term)
+
+        if not plant_id:
+            msg_en = "Please tell me the plant name (e.g., Tulsi, Neem, Ashwagandha)."
+            msg = translate_from_en(msg_en, lang) if lang != "en" else msg_en
+            return {
+                "answer": msg,
+                "severity": sev,
+                "followups": [],
+                "provisional": [],
+                "session_id": sess["id"],
+            }
+
+        plant = _fetch_plant_full(plant_id) or {}
+        preps = _preparations_for_plant(plant_id, k=3)
+
+        # Your existing builder for plant profile
+        answer_en = build_plant_answer(plant)
+
+        if preps:
+            answer_en += "\n\n🌿 **Preparations available in HerboAI DB:**\n"
+            for p in preps[:3]:
+                nm = p.get("name_en") or p.get("classical_name") or "Preparation"
+                form = p.get("form_type") or ""
+                answer_en += f"- {nm}" + (f" ({form})" if form else "") + "\n"
+
+        answer = translate_from_en(answer_en, lang) if lang != "en" else answer_en
+        return {
+            "answer": answer,
+            "severity": sev,
+            "followups": [],
+            "provisional": preps,
+            "structured": {"intent": "plant_info", "plant": plant, "preparations": preps},
+            "session_id": sess["id"],
+        }
+
+    # -----------------------------
+    # From here onward: disease / remedy / symptom flow
+    # -----------------------------
+
+    # Detect/lock condition once per session (but avoid nonsense for plant-only queries)
+    if not sess.get("condition"):
+        sess["condition"] = _classify_condition(user_text)
+    condition = sess["condition"]
+
+    # Update slots only in disease/symptom mode (keeps UX sane)
+    new_slots = _extract_slots(user_text)
+    if new_slots:
+        sess.setdefault("slots", {}).update(new_slots)
+        sess["stage"] = "collecting"
+    slots = sess.get("slots", {})
+
+    # Decide whether we should be strict with followups (symptom narrative) or not (explicit disease/remedy)
+    explicit_disease_or_remedy = intent in ("disease", "remedy", "treatment", "condition") or (
+        condition != "general" and len(text_en.split()) <= 8
+    )
+    symptom_like = intent in ("symptom", "complaint", "triage") or (not explicit_disease_or_remedy)
+
+    # -----------------------------
+    # Provisional retrieval (DB-first schema-correct)
+    # disease -> mapping -> preparations
+    # -----------------------------
+    provisional: list[dict] = []
+    try:
+        db = get_db()
+        disease_term = _extract_disease_term(text_en, entities)
+        disease_id = resolve_disease_id(db, disease_term) if isinstance(disease_term, str) else None
+
+        # fallback using coarse condition if disease term doesn't resolve
+        if not disease_id and condition and condition != "general":
+            disease_id = resolve_disease_id(db, condition)
+
+        if disease_id:
+            provisional = fetch_preparations_for_disease(db, disease_id, limit=6)
+
+        # Optional vector fallback if DB mapping yields none
+        if not provisional:
+            try:
+                seed = condition if condition != "general" else text_en
+                qvec = embed_query(seed if isinstance(seed, str) else text_en)
+                vec_hits = vector_search_preparations_lang(qvec, lang, k=8)
+                ids = [h["id"] for h in vec_hits]
+                prep_rows = hydrate_preparations(ids)
+                dist_by_id = {h["id"]: h.get("distance", 0.0) for h in vec_hits}
+                ranked = rank_preparations(
+                    query_tags=[condition],
+                    candidates=prep_rows,
+                    distance_by_id=dist_by_id,
+                    severity_band=sev.get("band", "low"),
+                )
+                provisional = ranked[:3]
+            except Exception:
+                provisional = []
+    except Exception:
+        provisional = []
+
+    # -----------------------------
+    # Followups: only strict-gate for symptom narrative
+    # -----------------------------
+    req_missing = _missing_required(sess)
+    opt_missing = _missing_optional(sess)
+
+    # Symptom narrative: ask REQUIRED, but still show remedies (hybrid response)
+    if symptom_like and req_missing:
+        followups = _slot_questions(condition, req_missing)
+        if not followups:
+            followups = ["Since when (days/months/years)?", "Age and gender?", "Is it getting better or worse?"]
+
+        noted = ""
+        if slots:
+            noted = "✅ Noted: " + "; ".join([f"{k}={v}" for k, v in slots.items()]) + "\n\n"
+
+        response_en = build_hybrid_response(
+            severity=sev.get("band", "low"),
+            followups=followups,
+            provisional=provisional,
+        )
+        if noted:
+            response_en = f"{noted}{response_en}"
+
+        response = translate_from_en(response_en, lang) if lang != "en" else response_en
+        return {
+            "answer": response,
+            "severity": sev,
+            "followups": followups,
+            "provisional": provisional,
+            "structured": {"condition": condition, "preparations": provisional},
+            "session_id": sess["id"],
+        }
+
+    # Disease/remedy explicit: NEVER block behind required slots; show final response + optional questions
+    sess["stage"] = "ready"
+
+    # Optional questions: for explicit disease/remedy, keep them truly optional
+    optional_qs: list[str] = []
+    if opt_missing:
+        optional_qs.extend(_slot_questions(condition, opt_missing))
+    # if explicit disease intent, we may add required questions as optional too (but don't gate)
+    if explicit_disease_or_remedy and req_missing:
+        optional_qs = _slot_questions(condition, req_missing) + optional_qs
+
+    from services.response_builder import build_final_response
+    response_en = build_final_response(
+        severity=sev.get("band", "low"),
+        provisional=provisional,
+        optional_questions=optional_qs,
+        condition=condition,
+        slots=slots,
+    )
+    response = translate_from_en(response_en, lang) if lang != "en" else response_en
+
+    # Structured plants extraction from preparation ingredients (nice for UI)
+    structured: dict = {"condition": condition, "preparations": provisional}
+    try:
+        plants: list[dict] = []
+        seen: set[int] = set()
+        for pr in provisional[:3]:
+            pid = pr.get("id")
+            if not pid:
+                continue
+            for ing in ingredients_for_preparation(int(pid))[:6]:
+                plant_id = ing.get("plant_id")
+                if plant_id and int(plant_id) not in seen:
+                    seen.add(int(plant_id))
+                    plants.append(
+                        {
+                            "id": int(plant_id),
+                            "common_name_en": ing.get("common_name_en"),
+                            "botanical_name": ing.get("botanical_name"),
+                        }
+                    )
+        if plants:
+            structured["plants"] = plants
+    except Exception:
+        pass
+
+    return {
+        "answer": response,
+        "severity": sev,
+        "followups": optional_qs,
+        "provisional": provisional,
+        "structured": structured,
+        "session_id": sess["id"],
     }
+
+# -----------------------------------------------------------------------------
+# Public API expected by api/routes.py (stable entrypoints)
+# -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# Public API expected by api/routes.py (stable entrypoints)
+# -----------------------------------------------------------------------------
+
+def run_pipeline(
+    payload: dict | None = None,
+    *,
+    user_text: str | None = None,
+    session_id: str | None = None,
+    lang: str | None = None,
+) -> dict:
+    """
+    Supports BOTH call styles:
+      1) run_pipeline(payload_dict)
+      2) run_pipeline(user_text=..., session_id=..., lang=...)
+    """
+    if payload is not None:
+        user_text = (
+            payload.get("message")
+            or payload.get("query")
+            or payload.get("text")
+            or user_text
+            or ""
+        )
+        session_id = payload.get("session_id") or payload.get("session") or session_id
+        lang = payload.get("lang") or payload.get("language") or lang
+
+    user_text = (user_text or "").strip()
+    if not user_text:
+        return {
+            "answer": "Please enter a query.",
+            "severity": {"band": "low", "red_flags": []},
+            "followups": [],
+            "provisional": [],
+        }
+
+    # Call your actual core function here
+    return handle_chat(user_text=user_text, session_id=session_id, lang=lang)
+

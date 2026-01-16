@@ -2,6 +2,8 @@
 from flask import Blueprint, request, jsonify, current_app
 import sqlite3, json
 from db import get_db
+from services.admin_i18n_indexer import admin_save_with_i18n
+
 
 admin_prep_bp = Blueprint("preparations", __name__, url_prefix="/api/preparations")
 
@@ -150,6 +152,21 @@ def create_preparation():
         ))
         conn.commit()
         new_id = cur.lastrowid
+
+        # Update i18n FTS indexes
+        admin_save_with_i18n(
+            entity_type="preparation",
+            entity_id=new_id,
+            en_fields={
+                "name": data.get("name_en"),
+                "description": data.get("description_en"),
+                "steps": data.get("steps_en"),
+                "dosage": data.get("dosage_en"),
+                "precautions": data.get("precautions_en"),
+            },
+        )
+
+
         row = conn.execute("SELECT * FROM preparations WHERE id=?", (new_id,)).fetchone()
         return jsonify(_row_to_dict(row)), 201
     except ValueError as ve:
@@ -198,6 +215,19 @@ def update_preparation(prep_id):
         if cur.rowcount == 0:
             return jsonify({"error": "Not found"}), 404
         conn.commit()
+
+         # Update i18n FTS indexes
+        admin_save_with_i18n(
+            entity_type="preparation",
+            entity_id=prep_id,
+            en_fields={
+                "name": data.get("name_en"),
+                "description": data.get("description_en"),
+                "steps": data.get("steps_en"),
+                "dosage": data.get("dosage_en"),
+                "precautions": data.get("precautions_en"),
+            },
+        )
 
         row = conn.execute("SELECT * FROM preparations WHERE id=?", (prep_id,)).fetchone()
         return jsonify(_row_to_dict(row))

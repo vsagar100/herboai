@@ -39,7 +39,10 @@ def preload_models():
         
         if async_tx.is_ready():
             elapsed = time.time() - start
-            print(f"[Startup] ✓ Translation models loaded in {elapsed:.1f}s")
+            if elapsed < 1:
+                print(f"[Startup] ✓ Translation models loaded in {elapsed*1000:.0f}ms")
+            else:
+                print(f"[Startup] ✓ Translation models loaded in {elapsed:.2f}s")
             
             # 3. Test translation to ensure it works
             try:

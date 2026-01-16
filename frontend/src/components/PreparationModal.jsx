@@ -1,293 +1,473 @@
 // src/components/PreparationModal.jsx
 import React, { useEffect, useMemo, useState } from "react";
 
-/* --- Mini UI primitives (match DiseaseModal/AdminPanel look) --- */
-function Button({ className="", ...p }) {
-  return <button {...p} className={`rounded-2xl px-4 py-2 font-medium shadow-sm bg-gradient-to-b from-emerald-500 to-emerald-600 text-white hover:from-emerald-600 hover:to-emerald-700 active:scale-[.98] disabled:opacity-50 ${className}`}/>;
-}
-function OutlineButton({ className="", ...p }) {
-  return <button {...p} className={`rounded-2xl px-4 py-2 font-medium border border-emerald-300 text-emerald-700 bg-white shadow-sm hover:bg-emerald-50 ${className}`}/>;
-}
-function Input({ className="", ...p }) {
-  return <input {...p} className={`w-full rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm outline-none focus:ring-2 focus:ring-emerald-200 ${className}`}/>;
-}
-function TextArea({ className="", ...p }) {
-  return <textarea {...p} className={`w-full rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm outline-none focus:ring-2 focus:ring-emerald-200 ${className}`}/>;
-}
-function Select({ className="", children, ...p }) {
-  return <select {...p} className={`w-full rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm outline-none focus:ring-2 focus:ring-emerald-200 ${className}`}>{children}</select>;
-}
-
-/* --- API origin + helper --- */
-const API_ORIGIN =
-  (typeof window !== "undefined" && window.__HERBOAI_API_ORIGIN__) ||
-  (import.meta?.env?.VITE_API_ORIGIN) ||
-  "http://localhost:5000";
-
-async function api(path, { method = "GET", body, auth = true, headers = {} } = {}) {
-  const token = localStorage.getItem("herboai_token");
-  const res = await fetch(`${API_ORIGIN}${path}`, {
-    method,
-    headers: {
-      ...(body instanceof FormData ? {} : { "Content-Type": "application/json" }),
-      ...(auth && token ? { Authorization: `Bearer ${token}` } : {}),
-      ...headers,
-    },
-    body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
-    credentials: "include",
-  });
-  if (!res.ok) {
-    let msg = `${res.status} ${res.statusText}`;
-    try { const j = await res.json(); msg = j.error || j.message || msg; } catch {}
-    throw new Error(msg);
-  }
-  const ct = res.headers.get("content-type") || "";
-  return ct.includes("application/json") ? res.json() : res.text();
-}
-
-/* ------------ Array & object helpers (no stray quotes) ------------ */
-const cleanArray = (arr) =>
-  Array.from(new Set(
-    (Array.isArray(arr) ? arr : [])
-      .map(x => (x == null ? "" : String(x)).trim())
-      .filter(Boolean)
-  ));
-
-function toArray(v) {
-  if (!v) return [];
-  if (Array.isArray(v)) return v;
-  if (typeof v === "string") {
-    const s = v.trim();
-    if (!s) return [];
-    if (s.startsWith("[") && s.endsWith("]")) {
-      try { return JSON.parse(s); } catch { /* fallthrough */ }
-    }
-    // accept CSV or newline lists
-    return s.split(/[\n,]/).map(x=>x.trim()).filter(Boolean);
-  }
-  return [];
-}
-function toObject(v, fallback={}) {
-  if (!v) return { ...fallback };
-  if (typeof v === "object") return { ...fallback, ...v };
-  if (typeof v === "string" && v.trim()) {
-    try { return { ...fallback, ...JSON.parse(v) }; } catch { /* ignore */ }
-  }
-  return { ...fallback };
-}
-
-/* ---------- Reusable editors: Chips list & KV grid ---------- */
-function ChipsInput({ label, values, onChange, placeholder="Add and press Enter" }) {
-  const [text, setText] = useState("");
-  function add(v) {
-    const t = (v||"").trim();
-    if (!t) return;
-    if (!values.includes(t)) onChange([...values, t]);
-  }
+/* --- Small UI primitives (match your AdminPanel look) --- */
+function Button({ className = "", ...p }) {
   return (
-    <div>
-      {label && <label className="mb-1 block text-sm font-medium">{label}</label>}
-      <div className="flex gap-2">
-        <Input
-          value={text}
-          placeholder={placeholder}
-          onChange={e=>setText(e.target.value)}
-          onKeyDown={e=>{
-            if (e.key === "Enter") { e.preventDefault(); add(text); setText(""); }
-          }}
-        />
-        <OutlineButton type="button" onClick={()=>{ add(text); setText(""); }}>Add</OutlineButton>
-      </div>
-      <div className="mt-2 flex flex-wrap gap-2">
-        {values.map((v,i)=>(
-          <span key={i} className="inline-flex items-center gap-2 rounded-full bg-emerald-50 text-emerald-700 px-3 py-1 text-sm border border-emerald-200">
-            {v}
-            <button type="button" className="hover:text-rose-600" onClick={()=>onChange(values.filter(x=>x!==v))}>×</button>
-          </span>
-        ))}
+    <button
+      {...p}
+      className={
+        "rounded-2xl px-4 py-2 font-medium shadow-sm transition active:scale-[0.99] disabled:opacity-60 " +
+        className
+      }
+    />
+  );
+}
+function Input({ className = "", ...p }) {
+  return (
+    <input
+      {...p}
+      className={
+        "w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-emerald-400 " +
+        className
+      }
+    />
+  );
+}
+function TextArea({ className = "", ...p }) {
+  return (
+    <textarea
+      {...p}
+      className={
+        "w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-emerald-400 " +
+        className
+      }
+    />
+  );
+}
+function Select({ className = "", children, ...p }) {
+  return (
+    <select
+      {...p}
+      className={
+        "w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-emerald-400 " +
+        className
+      }
+    >
+      {children}
+    </select>
+  );
+}
+function ModalShell({ open, title, onClose, children }) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
+      <div className="w-full max-w-4xl rounded-3xl bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <div className="text-lg font-semibold text-slate-800">{title}</div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full px-3 py-1 text-sm text-slate-600 hover:bg-slate-50"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="px-6 py-5">{children}</div>
       </div>
     </div>
   );
 }
 
-/* ---- The modal for create/edit ---- */
+const API_ORIGIN =
+  (typeof window !== "undefined" && window.__HERBOAI_API_ORIGIN__) ||
+  (import.meta?.env?.VITE_API_ORIGIN) ||
+  "http://localhost:5000";
+
+async function api(path, { method = "GET", body, auth = true } = {}) {
+  const token = localStorage.getItem("herboai_token");
+  const res = await fetch(`${API_ORIGIN}${path}`, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      ...(auth && token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
+  if (!res.ok) {
+    const msg = (data && data.error) || res.statusText || "Request failed";
+    throw new Error(msg);
+  }
+  return data;
+}
+
+const parseTags = (v) => {
+  if (!v) return [];
+  if (Array.isArray(v)) return v;
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (!s) return [];
+    try {
+      const j = JSON.parse(s);
+      if (Array.isArray(j)) return j;
+    } catch {}
+    return s.split(",").map((x) => x.trim()).filter(Boolean);
+  }
+  return [];
+};
+const toJsonTags = (arr) => JSON.stringify(Array.from(new Set(arr)).filter(Boolean));
+
+const INDICATION_TAGS = [
+  "cough","cold","fever","sore_throat","indigestion","acidity","constipation",
+  "diarrhea","gas","headache","migraine","joint_pain","arthritis",
+  "skin_acne","eczema","wound","allergy","stress","anxiety","sleep",
+  "diabetes_support","bp_support","immunity","fatigue","piles"
+];
+
+function TagPicker({ value, onChange }) {
+  const selected = useMemo(() => new Set(parseTags(value)), [value]);
+
+  function toggle(tag) {
+    const next = new Set(selected);
+    if (next.has(tag)) next.delete(tag);
+    else next.add(tag);
+    onChange(Array.from(next));
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-2">
+        {INDICATION_TAGS.map((t) => {
+          const active = selected.has(t);
+          return (
+            <button
+              key={t}
+              type="button"
+              onClick={() => toggle(t)}
+              className={
+                "px-3 py-1 rounded-full border text-sm transition " +
+                (active
+                  ? "bg-emerald-600 text-white border-emerald-700"
+                  : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50")
+              }
+            >
+              {t.replaceAll("_", " ")}
+            </button>
+          );
+        })}
+      </div>
+      <div className="text-xs text-slate-500">
+        Selected: {Array.from(selected).join(", ") || "—"}
+      </div>
+    </div>
+  );
+}
+
+function LangTabs({ tab, setTab }) {
+  const items = [
+    { k: "en", label: "EN" },
+    { k: "hi", label: "HI" },
+    { k: "mr", label: "MR" },
+  ];
+  return (
+    <div className="flex gap-2">
+      {items.map((it) => (
+        <button
+          key={it.k}
+          type="button"
+          onClick={() => setTab(it.k)}
+          className={
+            "px-3 py-1 rounded-full text-sm border transition " +
+            (tab === it.k
+              ? "bg-emerald-600 text-white border-emerald-700"
+              : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50")
+          }
+        >
+          {it.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function PreparationModal({ open, initial, onClose, onSaved }) {
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
+  const [langTab, setLangTab] = useState("en");
+  const [tagArr, setTagArr] = useState([]);
 
-  // controlled JSON fields
-  const [steps, setSteps] = useState([]);
-  const [equipment, setEquipment] = useState([]);
-  const [dosage, setDosage] = useState({ adult: "", child: "" });
+  const [i18n, setI18n] = useState({
+    hi: { verified: false, name: "", description: "", steps: "", dosage: "", precautions: "" },
+    mr: { verified: false, name: "", description: "", steps: "", dosage: "", precautions: "" },
+  });
 
   useEffect(() => {
     if (!open) return;
-    const v = initial || {};
-    setForm({
-      id: v.id,
-      name_en: v.name_en || "",
-      name_hi: v.name_hi || "",
-      name_mr: v.name_mr || "",
-      classical_name: v.classical_name || "",
-      ayush_system: v.ayush_system || "",
-      form_type: v.form_type || "",
-      category: v.category || "",
-      duration: v.duration || "",
-      yield: v.yield || "",
-      storage: v.storage || "",
-      shelf_life: v.shelf_life || "",
-      timing: v.timing || "",
-      anupana: v.anupana || "",
-      notes: v.notes || "",
+    const init = initial || {};
+    setForm({ ...init });
+    setTagArr(parseTags(init.indications_tags));
+    setI18n({
+      hi: {
+        verified: false,
+        name: init.name_hi || "",
+        description: init.description_hi || "",
+        steps: init.steps_hi || "",
+        dosage: init.dosage_hi || "",
+        precautions: init.precautions_hi || "",
+      },
+      mr: {
+        verified: false,
+        name: init.name_mr || "",
+        description: init.description_mr || "",
+        steps: init.steps_mr || "",
+        dosage: init.dosage_mr || "",
+        precautions: init.precautions_mr || "",
+      },
     });
-    setSteps(toArray(v.preparation_steps));
-    setEquipment(toArray(v.equipment_needed));
-    const dz = toObject(v.dosage_json, { adult:"", child:"" });
-    setDosage({ adult: dz.adult || "", child: dz.child || "" });
+    setLangTab("en");
   }, [open, initial]);
 
-  const setField = (k, val) => setForm(f => ({ ...f, [k]: val }));
+  const isNew = useMemo(() => !form?.id, [form?.id]);
 
-  // tiny reordering helpers for steps
-  function move(arr, from, to) {
-    const a = [...arr];
-    const [x] = a.splice(from, 1);
-    a.splice(to, 0, x);
-    return a;
+  function setField(k, v) {
+    setForm((f) => ({ ...f, [k]: v }));
+  }
+
+  function buildPayload() {
+    const payload = { ...form };
+
+    // Normalize signals
+    if (payload.efficacy_level !== undefined && payload.efficacy_level !== null && payload.efficacy_level !== "") {
+      payload.efficacy_level = Number(payload.efficacy_level);
+    } else {
+      delete payload.efficacy_level;
+    }
+    payload.indications_tags = toJsonTags(tagArr);
+
+    payload.i18n_overrides = {
+      hi: {
+        verified: !!i18n.hi.verified,
+        fields: {
+          name: i18n.hi.name,
+          description: i18n.hi.description,
+          steps: i18n.hi.steps,
+          dosage: i18n.hi.dosage,
+          precautions: i18n.hi.precautions,
+        },
+      },
+      mr: {
+        verified: !!i18n.mr.verified,
+        fields: {
+          name: i18n.mr.name,
+          description: i18n.mr.description,
+          steps: i18n.mr.steps,
+          dosage: i18n.mr.dosage,
+          precautions: i18n.mr.precautions,
+        },
+      },
+    };
+
+    Object.keys(payload).forEach((k) => {
+      if (payload[k] === null || payload[k] === undefined) delete payload[k];
+    });
+    return payload;
   }
 
   async function handleSave(e) {
     e?.preventDefault();
-    if (!form.name_en?.trim()) { alert("Name (EN) is required"); return; }
-    if (!form.form_type?.trim()) { alert("Form Type is required"); return; }
-    if (cleanArray(steps).length === 0) { alert("Add at least one preparation step"); return; }
-
-    const payload = {
-      ...form,
-      preparation_steps: cleanArray(steps),
-      equipment_needed: cleanArray(equipment).length ? cleanArray(equipment) : null,
-      dosage_json: (dosage.adult || dosage.child) ? { adult: dosage.adult || "", child: dosage.child || "" } : null,
-    };
-
+    if (!form?.name_en?.trim()) {
+      alert("Preparation Name (EN) is required");
+      return;
+    }
     setSaving(true);
     try {
-      const isNew = !form.id;
+      const payload = buildPayload();
       const path = isNew ? "/api/admin/preparations" : `/api/admin/preparations/${form.id}`;
       const method = isNew ? "POST" : "PUT";
-      const res = await api(path, { method, body: payload });
-      onSaved?.(res);
+      const saved = await api(path, { method, body: payload });
+      onSaved?.(saved);
       onClose?.();
     } catch (err) {
-      alert(`Save failed: ${err.message}`);
+      console.error(err);
+      alert(err?.message || "Failed to save preparation");
     } finally {
       setSaving(false);
     }
   }
 
-  if (!open) return null;
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div onClick={e=>e.stopPropagation()} className="w-full max-w-5xl rounded-2xl bg-white shadow-2xl ring-1 ring-slate-100">
-        <div className="flex items-center justify-between border-b px-5 py-4">
-          <h3 className="text-lg font-semibold">{form.id ? "Edit Preparation" : "Add Preparation"}</h3>
-          <button className="rounded-full p-2 hover:bg-slate-100" onClick={onClose}>✕</button>
+    <ModalShell open={open} title={isNew ? "Add Preparation" : "Edit Preparation"} onClose={onClose}>
+      <form onSubmit={handleSave} className="space-y-5">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div>
+            <label className="mb-1 block text-sm font-medium">Name (EN)</label>
+            <Input value={form.name_en || ""} onChange={(e) => setField("name_en", e.target.value)} />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium">Type</label>
+            <Input value={form.prep_type || ""} onChange={(e) => setField("prep_type", e.target.value)} />
+          </div>
+
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-sm font-medium">Description (EN)</label>
+            <TextArea rows={3} value={form.description_en || ""} onChange={(e) => setField("description_en", e.target.value)} />
+          </div>
+
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-sm font-medium">Steps (EN)</label>
+            <TextArea rows={4} value={form.steps_en || ""} onChange={(e) => setField("steps_en", e.target.value)} />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium">Dosage (EN)</label>
+            <Input value={form.dosage_en || ""} onChange={(e) => setField("dosage_en", e.target.value)} />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium">Precautions (EN)</label>
+            <Input value={form.precautions_en || ""} onChange={(e) => setField("precautions_en", e.target.value)} />
+          </div>
+
+          <div className="md:col-span-2 rounded-2xl border border-slate-100 bg-slate-50 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="font-semibold text-slate-800">AI Signals</div>
+              <div className="text-xs text-slate-500">Used for severity-aware ranking</div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-sm font-medium">Efficacy Level (1–5)</label>
+                <Select value={form.efficacy_level ?? ""} onChange={(e) => setField("efficacy_level", e.target.value)}>
+                  <option value="">—</option>
+                  {[1,2,3,4,5].map((n) => <option key={n} value={n}>{n}</option>)}
+                </Select>
+                <div className="mt-1 text-xs text-slate-500">1=mild supportive … 5=strong confidence (admin curated)</div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium">Onset Speed</label>
+                <Select value={form.onset_speed ?? ""} onChange={(e) => setField("onset_speed", e.target.value)}>
+                  <option value="">—</option>
+                  {["fast","medium","slow"].map((x) => <option key={x} value={x}>{x}</option>)}
+                </Select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium">Difficulty Level</label>
+                <Select value={form.difficulty_level ?? ""} onChange={(e) => setField("difficulty_level", e.target.value)}>
+                  <option value="">—</option>
+                  {["easy","medium","hard"].map((x) => <option key={x} value={x}>{x}</option>)}
+                </Select>
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="mb-2 block text-sm font-medium">Indication Tags (controlled)</label>
+                <TagPicker value={tagArr} onChange={setTagArr} />
+              </div>
+            </div>
+          </div>
+
+          <div className="md:col-span-2 rounded-2xl border border-slate-100 bg-white p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="font-semibold text-slate-800">Translations (Admin override)</div>
+              <LangTabs tab={langTab} setTab={setLangTab} />
+            </div>
+
+            {langTab === "en" && (
+              <div className="text-sm text-slate-600">
+                English above is canonical. Use HI/MR tabs to override translations and mark verified.
+              </div>
+            )}
+
+            {langTab === "hi" && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4"
+                    checked={!!i18n.hi.verified}
+                    onChange={(e) => setI18n((x) => ({ ...x, hi: { ...x.hi, verified: e.target.checked } }))}
+                  />
+                  <span className="text-sm font-medium">Mark Hindi as Verified</span>
+                  <span className="text-xs text-slate-500">(manual override)</span>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Name (HI)</label>
+                  <Input value={i18n.hi.name} onChange={(e) => setI18n((x) => ({ ...x, hi: { ...x.hi, name: e.target.value } }))} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Description (HI)</label>
+                  <TextArea rows={3} value={i18n.hi.description} onChange={(e) => setI18n((x) => ({ ...x, hi: { ...x.hi, description: e.target.value } }))} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Steps (HI)</label>
+                  <TextArea rows={4} value={i18n.hi.steps} onChange={(e) => setI18n((x) => ({ ...x, hi: { ...x.hi, steps: e.target.value } }))} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Dosage (HI)</label>
+                  <Input value={i18n.hi.dosage} onChange={(e) => setI18n((x) => ({ ...x, hi: { ...x.hi, dosage: e.target.value } }))} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Precautions (HI)</label>
+                  <Input value={i18n.hi.precautions} onChange={(e) => setI18n((x) => ({ ...x, hi: { ...x.hi, precautions: e.target.value } }))} />
+                </div>
+              </div>
+            )}
+
+            {langTab === "mr" && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4"
+                    checked={!!i18n.mr.verified}
+                    onChange={(e) => setI18n((x) => ({ ...x, mr: { ...x.mr, verified: e.target.checked } }))}
+                  />
+                  <span className="text-sm font-medium">Mark Marathi as Verified</span>
+                  <span className="text-xs text-slate-500">(manual override)</span>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Name (MR)</label>
+                  <Input value={i18n.mr.name} onChange={(e) => setI18n((x) => ({ ...x, mr: { ...x.mr, name: e.target.value } }))} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Description (MR)</label>
+                  <TextArea rows={3} value={i18n.mr.description} onChange={(e) => setI18n((x) => ({ ...x, mr: { ...x.mr, description: e.target.value } }))} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Steps (MR)</label>
+                  <TextArea rows={4} value={i18n.mr.steps} onChange={(e) => setI18n((x) => ({ ...x, mr: { ...x.mr, steps: e.target.value } }))} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Dosage (MR)</label>
+                  <Input value={i18n.mr.dosage} onChange={(e) => setI18n((x) => ({ ...x, mr: { ...x.mr, dosage: e.target.value } }))} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Precautions (MR)</label>
+                  <Input value={i18n.mr.precautions} onChange={(e) => setI18n((x) => ({ ...x, mr: { ...x.mr, precautions: e.target.value } }))} />
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
-        <form onSubmit={handleSave}>
-          <div className="max-h-[70vh] overflow-y-auto p-5 space-y-6">
-            {/* Identity & meta */}
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div><label className="mb-1 block text-sm font-medium">Name (EN) *</label><Input value={form.name_en} onChange={e=>setField("name_en", e.target.value)} required/></div>
-              <div><label className="mb-1 block text-sm font-medium">Classical Name</label><Input value={form.classical_name} onChange={e=>setField("classical_name", e.target.value)} /></div>
-
-              <div><label className="mb-1 block text-sm font-medium">Name (HI)</label><Input value={form.name_hi} onChange={e=>setField("name_hi", e.target.value)} /></div>
-              <div><label className="mb-1 block text-sm font-medium">Name (MR)</label><Input value={form.name_mr} onChange={e=>setField("name_mr", e.target.value)} /></div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium">Form Type *</label>
-                <Input
-                  placeholder="decoction | paste | powder | oil | ghrta | lehya | tablet"
-                  value={form.form_type}
-                  onChange={e=>setField("form_type", e.target.value)}
-                  required
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium">Category</label>
-                <Input
-                  placeholder="single_herb | compound | patent_medicine"
-                  value={form.category}
-                  onChange={e=>setField("category", e.target.value)}
-                />
-              </div>
-
-              <div><label className="mb-1 block text-sm font-medium">Timing</label>
-                <Input placeholder="before_food | after_food | empty_stomach | free text"
-                       value={form.timing} onChange={e=>setField("timing", e.target.value)} />
-              </div>
-              <div><label className="mb-1 block text-sm font-medium">Anupana</label>
-                <Input placeholder="honey | water | milk | ..."
-                       value={form.anupana} onChange={e=>setField("anupana", e.target.value)} />
-              </div>
-
-              <div><label className="mb-1 block text-sm font-medium">Duration</label><Input value={form.duration} onChange={e=>setField("duration", e.target.value)} /></div>
-              <div><label className="mb-1 block text-sm font-medium">Yield</label><Input value={form.yield} onChange={e=>setField("yield", e.target.value)} /></div>
-
-              <div><label className="mb-1 block text-sm font-medium">Storage</label><Input value={form.storage} onChange={e=>setField("storage", e.target.value)} /></div>
-              <div><label className="mb-1 block text-sm font-medium">Shelf Life</label><Input value={form.shelf_life} onChange={e=>setField("shelf_life", e.target.value)} /></div>
-
-              <div><label className="mb-1 block text-sm font-medium">Dosage (Adult)</label>
-                <Input value={dosage.adult} onChange={e=>setDosage(d=>({...d, adult:e.target.value}))} placeholder="e.g., 10 ml twice daily"/>
-              </div>
-              <div><label className="mb-1 block text-sm font-medium">Dosage (Child)</label>
-                <Input value={dosage.child} onChange={e=>setDosage(d=>({...d, child:e.target.value}))} placeholder="e.g., 5 ml twice daily"/>
-              </div>
-            </div>
-
-            {/* Steps editor */}
-            <div>
-              <label className="mb-1 block text-sm font-medium">Preparation Steps *</label>
-              <div className="space-y-2">
-                {steps.map((s, i)=>(
-                  <div key={i} className="flex items-center gap-2">
-                    <div className="w-8 text-center text-xs font-semibold text-slate-500">{i+1}</div>
-                    <Input value={s} onChange={e=>setSteps(steps.map((x,idx)=> idx===i ? e.target.value : x))}/>
-                    <div className="flex gap-1">
-                      <OutlineButton type="button" onClick={()=>i>0 && setSteps(move(steps, i, i-1))}>↑</OutlineButton>
-                      <OutlineButton type="button" onClick={()=>i<steps.length-1 && setSteps(move(steps, i, i+1))}>↓</OutlineButton>
-                      <OutlineButton type="button" onClick={()=>setSteps(steps.filter((_,idx)=>idx!==i))}>Del</OutlineButton>
-                    </div>
-                  </div>
-                ))}
-                <Button type="button" onClick={()=>setSteps([...steps, ""])}>+ Step</Button>
-              </div>
-              {cleanArray(steps).length>0 && (
-                <div className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50/50 p-3 text-sm">
-                  <div className="mb-2 font-semibold text-emerald-700">Preview</div>
-                  <ol className="ml-4 list-decimal space-y-1">
-                    {cleanArray(steps).map((s,i)=><li key={i}>{s}</li>)}
-                  </ol>
-                </div>
-              )}
-            </div>
-
-            {/* Equipment editor */}
-            <ChipsInput label="Equipment Needed" values={equipment} onChange={setEquipment} placeholder="mortar & pestle, filter cloth, steel pot…" />
-
-            {/* Notes */}
-            <div>
-              <label className="mb-1 block text-sm font-medium">Notes</label>
-              <TextArea rows={3} value={form.notes} onChange={e=>setField("notes", e.target.value)} placeholder="Any special instructions, cautions, substitutions…" />
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-2 border-t px-5 py-4">
-            <OutlineButton type="button" onClick={onClose}>Cancel</OutlineButton>
-            <Button type="submit" disabled={saving}>{saving ? "Saving…" : "Save Preparation"}</Button>
-          </div>
-        </form>
-      </div>
-    </div>
+        <div className="flex justify-end gap-2">
+          <Button
+            type="button"
+            onClick={onClose}
+            className="border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            disabled={saving}
+            className="bg-gradient-to-r from-emerald-500 to-emerald-600 text-white hover:from-emerald-600 hover:to-emerald-700"
+          >
+            {saving ? "Saving..." : "Save"}
+          </Button>
+        </div>
+      </form>
+    </ModalShell>
   );
 }

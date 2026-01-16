@@ -264,6 +264,71 @@ console.log("API_ORIGIN:", API_ORIGIN, clean);
   return `${API_ORIGIN}/${clean.startsWith("files") ? img_path : `files/${img_path}`}`;
 };
 
+
+// ------------------ Controlled Indication Tags ------------------
+const INDICATION_TAGS = [
+  "cough","cold","fever","sore_throat","indigestion","acidity","constipation",
+  "diarrhea","gas","headache","migraine","joint_pain","arthritis",
+  "skin_acne","eczema","wound","allergy","stress","anxiety","sleep",
+  "diabetes_support","bp_support","immunity","fatigue","piles"
+];
+
+const parseTags = (v) => {
+  if (!v) return [];
+  if (Array.isArray(v)) return v;
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (!s) return [];
+    try {
+      const j = JSON.parse(s);
+      if (Array.isArray(j)) return j;
+    } catch {}
+    return s.split(",").map(x => x.trim()).filter(Boolean);
+  }
+  return [];
+};
+
+const toJsonTags = (arr) => JSON.stringify(Array.from(new Set(arr)).filter(Boolean));
+
+function TagPicker({ value, onChange }) {
+  const selected = useMemo(() => new Set(parseTags(value)), [value]);
+
+  function toggle(tag) {
+    const next = new Set(selected);
+    if (next.has(tag)) next.delete(tag);
+    else next.add(tag);
+    onChange(Array.from(next));
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-2">
+        {INDICATION_TAGS.map((t) => {
+          const active = selected.has(t);
+          return (
+            <button
+              key={t}
+              type="button"
+              onClick={() => toggle(t)}
+              className={
+                "px-3 py-1 rounded-full border text-sm transition " +
+                (active
+                  ? "bg-emerald-600 text-white border-emerald-700"
+                  : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50")
+              }
+            >
+              {t.replaceAll("_", " ")}
+            </button>
+          );
+        })}
+      </div>
+      <div className="text-xs text-slate-500">
+        Selected: {Array.from(selected).join(", ") || "—"}
+      </div>
+    </div>
+  );
+}
+
 // ------------------ Plants ------------------
 function ConfirmModal({ open, title="Confirm", message, onCancel, onConfirm }) {
   if (!open) return null;
@@ -287,6 +352,7 @@ function PlantFormModal({ open, initial, onClose, onSaved }) {
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
   const plantImagesRef = useRef(null);
+  const [tagArr, setTagArr] = useState([]);
 
   // Initialize form when modal opens or initial changes
   useEffect(() => {
@@ -297,6 +363,7 @@ function PlantFormModal({ open, initial, onClose, onSaved }) {
       init.dosha_effect = JSON.stringify(init.dosha_effect, null, 2);
     }
     setForm(init);
+    setTagArr(parseTags(init.indications_tags));
   }, [open, initial]);
 
   function setField(k, v) { 

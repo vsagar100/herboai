@@ -1,19 +1,21 @@
 from typing import Any
 from db import get_db
 from utils.json_tools import to_json_safe
+from utils.i18n import normalize_lang, fts_table
 
-def list_plants(q: str | None, limit: int, offset: int) -> dict[str, Any]:
+def list_plants(q: str | None, limit: int, offset: int, lang: str = "en") -> dict[str, Any]:
+    lang = normalize_lang(lang)
     db = get_db()
     cur = db.cursor()
 
     if q:
-        # FTS first, hydrate from base table
+        fts = fts_table("plant", lang)  # plants_fts_en
         cur.execute(
-            """
+            f"""
             WITH hits AS (
-              SELECT rowid AS id
-              FROM plants_fts
-              WHERE plants_fts MATCH ?
+              SELECT entity_id AS id
+              FROM {fts}
+              WHERE {fts} MATCH ?
               LIMIT ? OFFSET ?
             )
             SELECT p.*
@@ -22,18 +24,16 @@ def list_plants(q: str | None, limit: int, offset: int) -> dict[str, Any]:
             (q, limit, offset),
         )
     else:
+        order_col = {"en": "common_name_en", "hi": "common_name_hi", "mr": "common_name_mr"}.get(lang, "common_name_en")
         cur.execute(
-            "SELECT * FROM plants ORDER BY common_name_en NULLS LAST, botanical_name LIMIT ? OFFSET ?",
+            f"SELECT * FROM plants ORDER BY {order_col} NULLS LAST, botanical_name LIMIT ? OFFSET ?",
             (limit, offset),
         )
 
     rows = cur.fetchall()
     cur.close()
 
-    return {
-        "items": [to_json_safe(r) for r in rows],
-        "count": len(rows)
-    }
+    return {"items": [to_json_safe(r) for r in rows], "count": len(rows)}
 
 def get_plant(plant_id: int):
     db = get_db()

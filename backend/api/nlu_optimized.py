@@ -241,7 +241,8 @@ def search_plants_fuzzy(query: str, limit: int = 5) -> List[Dict]:
                     all_results.append(dict(row))
                     seen_ids.add(row["id"])
         except:
-            pass  # FTS might fail on some queries
+            print(f"[FTS] plants_fts failed: {e}")
+            #pass  # FTS might fail on some queries
     
     cur.close()
     return all_results[:limit]
@@ -302,7 +303,8 @@ def search_diseases_fuzzy(query: str, limit: int = 5) -> List[Dict]:
                     all_results.append(dict(row))
                     seen_ids.add(row["id"])
         except:
-            pass
+            print(f"[FTS] diseases_fts failed: {e}")
+            #pass
     
     cur.close()
     return all_results[:limit]

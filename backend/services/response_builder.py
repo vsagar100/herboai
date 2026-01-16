@@ -230,7 +230,6 @@ def build_plant_knowledge_snippet(plant: Dict) -> str:
     # No disclaimer here – this is pure knowledge text for embeddings / context.
     return " ".join(p.strip() for p in parts if p and str(p).strip())
 
-
 def build_disease_knowledge_snippet(disease: Dict) -> str:
     """
     Compact, embedding-friendly disease description that aligns with
@@ -276,3 +275,125 @@ def build_disease_knowledge_snippet(disease: Dict) -> str:
 
     # Again, no generic disclaimer – context only.
     return " ".join(p.strip() for p in parts if p and str(p).strip())
+
+def _fmt_steps(steps) -> str:
+    if not steps:
+        return ""
+    if isinstance(steps, list):
+        items = [s.strip() for s in steps if isinstance(s, str) and s.strip()]
+        return "\n".join([f"  {i+1}) {t}" for i, t in enumerate(items[:10])])
+    if isinstance(steps, str):
+        s = steps.strip()
+        return s
+    return ""
+
+
+def _fmt_dosage(dosage) -> str:
+    if not dosage:
+        return ""
+    if isinstance(dosage, dict):
+        out = []
+        adult = dosage.get("adult")
+        child = dosage.get("child")
+        general = dosage.get("general")
+        if adult:
+            out.append(f"  - Adult: {adult}")
+        if child:
+            out.append(f"  - Child: {child}")
+        if general and not (adult or child):
+            out.append(f"  - {general}")
+        # show a couple more keys if present
+        extra_keys = [k for k in dosage.keys() if k not in ("adult", "child", "general")]
+        for k in extra_keys[:2]:
+            out.append(f"  - {k}: {dosage.get(k)}")
+        return "\n".join(out)
+    # if it’s a string (already formatted)
+    if isinstance(dosage, str):
+        return dosage.strip()
+    return ""
+
+
+def _prep_card(p: dict) -> str:
+    name = p.get("name_en") or p.get("name") or p.get("classical_name") or "Herbal preparation"
+    form = p.get("form_type") or p.get("category") or ""
+    timing = (p.get("timing") or "").strip()
+    anupana = (p.get("anupana") or "").strip()
+    notes = (p.get("notes") or "").strip()
+
+    steps = _fmt_steps(p.get("preparation_steps"))
+    dosage = _fmt_dosage(p.get("dosage_json"))
+
+    lines = []
+    lines.append(f"**{name}**" + (f" ({form})" if form else ""))
+
+    if steps:
+        lines.append("**How to prepare:**")
+        lines.append(steps)
+
+    if dosage:
+        lines.append("**Dosage (general guidance):**")
+        lines.append(dosage)
+
+    if timing:
+        lines.append(f"**Timing:** {timing}")
+    if anupana:
+        lines.append(f"**Anupana:** {anupana}")
+    if notes:
+        lines.append(f"**Notes/Caution:** {notes}")
+
+    return "\n".join(lines)
+
+
+def build_hybrid_response(severity: str, followups: list[str], provisional: list[dict]) -> str:
+    """
+    Used while collecting followups.
+    MUST still give useful prep/remedy output.
+    """
+    lines = []
+    lines.append(f"🔍 **Assessment:** {severity.capitalize()} severity\n")
+
+    if provisional:
+        lines.append("🌿 **Suggested preparations (from HerboAI DB):**")
+        for idx, p in enumerate(provisional[:3], 1):
+            lines.append(f"\n{idx}) " + _prep_card(p))
+        lines.append("")
+
+    if followups:
+        lines.append("❓ **A few quick questions (to personalize, optional but helpful):**")
+        for i, q in enumerate(followups, 1):
+            lines.append(f"{i}. {q}")
+        lines.append("")
+
+    lines.append("⚠️ If symptoms worsen/persist or you have serious symptoms, consult a qualified doctor or AYUSH practitioner.")
+    return "\n".join(lines)
+
+
+def build_final_response(severity: str, provisional: list[dict], optional_questions: list[str], condition: str, slots: dict) -> str:
+    """
+    Final answer after required slots are present.
+    """
+    lines = []
+    lines.append(f"🔍 **Assessment:** {severity.capitalize()} severity\n")
+
+    if condition == "diabetes":
+        lines.append("🩺 **Diabetes support (AYUSH-friendly, non-emergency):**")
+        lines.append("- Diet: reduce refined carbs/sugar; prefer fiber-rich meals.")
+        lines.append("- Activity: daily walk + consistent sleep.")
+        lines.append("- Don’t stop prescribed medicines without doctor advice.\n")
+
+    if provisional:
+        lines.append("🌿 **Preparations (from HerboAI DB):**")
+        for idx, p in enumerate(provisional[:5], 1):
+            lines.append(f"\n{idx}) " + _prep_card(p))
+        lines.append("")
+    else:
+        lines.append("🌿 I couldn’t find a mapped preparation in the current DB for this query.\n")
+
+    if optional_questions:
+        lines.append("✅ **Optional (for better personalization):**")
+        for i, q in enumerate(optional_questions, 1):
+            lines.append(f"{i}. {q}")
+        lines.append("")
+
+    lines.append("⚠️ If symptoms worsen/persist or you have serious symptoms, consult a qualified doctor or AYUSH practitioner.")
+    return "\n".join(lines)

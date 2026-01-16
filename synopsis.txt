@@ -1,0 +1,100 @@
+A Project Synopsis on 
+HerboAI – AI based Virtual AYUSH Herbal Expert
+
+Abstract 
+This project introduces HerboAI, an intelligent virtual assistant that provides information on medicinal plants and disease remedies based on AYUSH principles — Ayurveda, Yoga, Naturopathy, Unani, Siddha, and Homeopathy. The system simulates a virtual herbal garden, enabling users to explore medicinal plants, understand their benefits, and receive suggestions for disease-specific herbal treatments.
+HerboAI is trained or fine-tuned on curated herbal datasets and AYUSH-approved remedies. An intuitive admin panel allows subject experts or AYUSH practitioners to continuously enhance the knowledge base by adding/editing plant properties, remedies, symptoms, and treatment paths. This enriched knowledge is used either through embedding-based retrieval (RAG) or model fine-tuning to enable accurate, context-aware responses.
+The system supports AYUSH professionals in diagnostics and prescription, and educates common users with safe, traditional herbal solutions — promoting personalized, holistic healthcare.
+
+Keywords: AYUSH, LLM, Virtual Herbal Expert, Medicinal Plants, Ayurveda Remedies, Natural Treatment, RAG, Admin Dashboard
+ 
+1. Introduction 
+The AYUSH systems of medicine—Ayurveda, Yoga & Naturopathy, Unani, Siddha, and Homeopathy—are ancient healthcare traditions focused on natural and holistic healing. Despite their effectiveness, AYUSH resources are often fragmented and not digitized or searchable in a modern, AI-integrated manner.
+HerboAI addresses this gap by offering a virtual assistant trained on structured data about herbal plants, symptoms, body types (prakriti), and disease-specific herbal formulations. By using Retrieval Augmented Generation(RAG) or open-source LLMs via Ollama, the project ensures privacy, customization, and offline functionality.
+The platform is useful for:
+•	AYUSH doctors looking for cross-reference or instant suggestions.
+•	Health practitioners seeking treatment guidelines aligned with AYUSH systems.
+•	General users looking for plant-based home remedies or health education.
+
+  
+2. Objectives 
+1.	To create a searchable, AI-powered virtual herbal and medicinal plants expert.
+2.	Develop AI based system that answers disease-related queries using AYUSH-compatible remedies.
+3.	To provide a backend system for admin-controlled editing of plant/remedy data.
+4.	To use RAG (Retrieval Augmented Generation) or fine-tuning to teach the LLM from curated AYUSH datasets.
+5.	To assist AYUSH professionals in real-time diagnosis and solution generation.
+6.	To educate common users on the benefits and applications of natural healing.
+
+3. System Architecture (3-Tier) 
+The HerboAI system is built on a modular 3-tier architecture to ensure scalability, efficiency, and modular development.
+1. Frontend (Presentation Layer) 
+•  Web UI (React):
+•	Plant library with search, images, and categorization by ailments, system (Ayurveda, Unani, etc.)
+•	Chat interface to ask remedies like “Natural cure for joint pain in Ayurveda”
+•	Detailed plant profiles (scientific name, region, parts used, usage)
+•	 Responsive for both mobile and desktop
+2. Backend (Business Logic Layer) 
+•	Data ingestion from admin panel goes through:
+o	Embedding engine (e.g., SentenceTransformers or Ollama-compatible embedding model)
+•	Vector store (e.g., ChromaDB, FAISS, SQLite)
+•	RAG pipeline: user query → embedding → semantic match from plant/remedy DB → prompt context + LLM response
+•	AI/NLP: spaCy, GPT4All, T5, or Llama or similar
+•	Admin dashboard:
+o	CRUD operations on herbal data
+o	Custom metadata tagging (dosha, taste, system, therapeutic uses)
+
+3. Database (Data Layer) 
+•  Plant data: name, AYUSH system, health benefits, usage, images, precautions
+•  Remedy data: symptoms, diagnosis patterns, dosages, lifestyle recommendations
+•  Storage:
+•	SQlite or MongoDB 
+4. Methodology 
+The HerboAI system is designed to function as a robust offline-capable, multilingual virtual herbal assistant tailored to the AYUSH ecosystem. The development follows a modular pipeline, combining data structuring, local AI processing, and user interaction through intuitive UI/UX components.
+
+1. System Architecture & Environment Setup
+•	A lightweight Python environment is set up using Flask as the backend server framework.
+•	Local dependencies are installed to ensure full offline functionality post-setup.
+•	SQLite or MongoDB is used as the database engine for herb metadata.
+•	Folder structure is modularized into api/, data/, ui/, and utils/.
+
+2. Herbal Repository Structuring
+•	A structured JSON/SQLite schema is designed to store medicinal herbs.
+•	Each herb includes:
+{"name", "ayush_system", "uses", "remedies", "preparation", "contraindications", "image_path"}
+•	Herbs are classified under AYUSH systems: Ayurveda, Siddha, Unani, Homeopathy.
+
+3. Search & NLP Processing
+•	Queries are processed through a local NLP pipeline using spaCy or HuggingFace transformers.
+•	NER and keyword extraction is performed on symptom or disease-based input.
+•	Semantic matching is implemented between extracted tokens and herb use cases.
+•	Rule-based logic maps matched entities to potential herbs with high confidence.
+
+4. Remedy Recommendation Logic
+•	Once a symptom or disease is recognized:
+•	Mapped to pre-tagged herbal records
+•	Ranked using TF-IDF or embedding similarity (via Sentence Transformers)
+•	Remedies are displayed with preparation methods and usage guidelines.
+
+5. Summarization Engine
+•	Herb details can be summarized using local models such as:
+o	T5-small or GPT4All for short, human-readable outputs.
+•	The summarizer operates offline and is triggered via user request or auto-summary toggle.
+
+6. Admin Panel Functionality
+•	Secure admin interface (basic auth/OTP) allows:
+o	Add/Edit/Delete herb entries
+o	Sync changes with local DB
+•	Admin changes propagate to the summarizer training corpus if needed.
+
+7. Testing and Evaluation
+•	Each module (NLP, Search) is unit and integration tested.
+•	Queries are evaluated using standard metrics:
+o	Precision@k, semantic similarity, and response latency.
+
+5. Expected Outcomes 
+•	A searchable, structured virtual herbal garden accessible through chat.
+•	AYUSH-compliant remedy recommendations for general and professional users.
+•	AI-assisted knowledge base searchable via natural language.
+•	Easily extendable via admin interface for new plants/remedies.
+•	Open-source and customizable AI healthcare assistant.
+

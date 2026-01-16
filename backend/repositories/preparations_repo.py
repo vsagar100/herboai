@@ -1,5 +1,6 @@
 from db import get_db
 from utils.json_tools import to_json_safe
+from utils.i18n import normalize_lang, fts_table
 
 def get_preparation(preparation_id: int):
     db = get_db()
@@ -9,16 +10,18 @@ def get_preparation(preparation_id: int):
     cur.close()
     return to_json_safe(row)
 
-def list_preparations(q: str | None, limit: int, offset: int):
+def list_preparations(q: str | None, limit: int, offset: int, lang: str = "en"):
+    lang = normalize_lang(lang)
     db = get_db()
     cur = db.cursor()
     if q:
+        fts = fts_table("preparation", lang)
         cur.execute(
-            """
+            f"""
             WITH hits AS (
-              SELECT rowid AS id
-              FROM preparations_fts
-              WHERE preparations_fts MATCH ?
+              SELECT entity_id AS id
+              FROM {fts}
+              WHERE {fts} MATCH ?
               LIMIT ? OFFSET ?
             )
             SELECT pr.*
@@ -27,7 +30,8 @@ def list_preparations(q: str | None, limit: int, offset: int):
             (q, limit, offset),
         )
     else:
-        cur.execute("SELECT * FROM preparations ORDER BY name_en LIMIT ? OFFSET ?", (limit, offset))
+        order_col = {"en": "name_en", "hi": "name_hi", "mr": "name_mr"}.get(lang, "name_en")
+        cur.execute(f"SELECT * FROM preparations ORDER BY {order_col} LIMIT ? OFFSET ?", (limit, offset))
     rows = cur.fetchall()
     cur.close()
     return [to_json_safe(r) for r in rows]
