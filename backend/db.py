@@ -161,13 +161,16 @@ def resolve_disease_id(conn: sqlite3.Connection, disease_text_en: str) -> Option
 
 
 def fetch_preparations_for_disease(conn: sqlite3.Connection, disease_id: int, limit: int = 6) -> List[Dict]:
+    """
+    Fetch preparations for a disease, prioritizing:
+    1. Preparations explicitly indicated for this disease (preparation_indications table)
+    2. Preparations made from plants that treat this disease (plant_disease_mapping)
+    3. Ordered by efficacy and explicit indication
+    
+    NOTE: Uses preparations.plant_id for primary plant link (preparation_ingredients table may be empty)
+    """
     sql = """
-    WITH pd AS (
-      SELECT plant_id, efficacy_level, evidence_type
-      FROM plant_disease_mapping
-      WHERE disease_id = ?
-    )
-    SELECT
+    SELECT DISTINCT
       pr.id,
       pr.name_en, pr.name_hi, pr.name_mr,
       pr.classical_name,
@@ -178,15 +181,15 @@ def fetch_preparations_for_disease(conn: sqlite3.Connection, disease_id: int, li
       pr.dosage_json, pr.timing, pr.anupana, pr.notes,
       p.id AS plant_id,
       p.botanical_name, p.common_name_en, p.common_name_hi, p.common_name_mr,
-      pd.efficacy_level, pd.evidence_type,
-      CASE WHEN pi.preparation_id IS NULL THEN 0 ELSE 1 END AS explicitly_indicated
-    FROM pd
-    JOIN plants p ON p.id = pd.plant_id
-    JOIN preparations pr ON pr.plant_id = pd.plant_id
-    LEFT JOIN preparation_indications pi
+      COALESCE(pi.strength, pdm.efficacy_level, 3) AS efficacy_level,
+      CASE WHEN pi.preparation_id IS NOT NULL THEN 1 ELSE 0 END AS explicitly_indicated
+    FROM preparations pr
+    INNER JOIN plants p ON p.id = pr.plant_id
+    INNER JOIN plant_disease_mapping pdm ON pdm.plant_id = p.id AND pdm.disease_id = ?
+    LEFT JOIN preparation_indications pi 
       ON pi.preparation_id = pr.id AND pi.disease_id = ?
     ORDER BY explicitly_indicated DESC,
-             COALESCE(pd.efficacy_level, 0) DESC,
+             COALESCE(pi.strength, pdm.efficacy_level, 0) DESC,
              pr.id DESC
     LIMIT ?
     """

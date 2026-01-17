@@ -5,6 +5,7 @@ import math
 import os
 import re
 import uuid
+from pathlib import Path
 from typing import Dict, Any, List, Optional
 from sentence_transformers import SentenceTransformer
 from sqlite_vec import serialize_float32
@@ -45,7 +46,7 @@ log = logging.getLogger("pipeline")
 # Global embedding model (lazy loaded)
 _EMB_MODEL = None
 _SENTENCE_MODEL_NAME = os.getenv("SENTENCE_MODEL_NAME", "all-MiniLM-L6-v2")
-_SENTENCE_MODEL_CACHE = os.getenv("SENTENCE_MODEL_CACHE", "D:\herboai\backend\models")  # e.g., /data/models/sentencetransformers
+_SENTENCE_MODEL_CACHE = os.getenv("SENTENCE_MODEL_CACHE", str(Path(__file__).parent.parent / "models"))  # e.g., /data/models/sentencetransformers
 
 def warmup_pipeline():
     """
@@ -183,6 +184,7 @@ def is_preparation_like_query(user_text: str, text_for_intent: str | None) -> bo
     # English / transliterated preparation keywords
     prep_keywords_en = [
         "how to make", "how to prepare", "recipe", "method", "steps",
+        "preparation", "prepare",  # Added: direct prep reference
         "kadha", "kada", "kadhha",
         "kwath", "kwatha",
         "decoction", "kashaya", "kashayam",
@@ -439,10 +441,13 @@ def _prune_vec_hits(hits: List[Dict], max_distance: float) -> List[Dict]:
     return [h for h in hits if "distance" not in h or (h.get("distance", 999) <= max_distance)]
 
 def _preparations_for_plant(plant_id: int, k: int = 5) -> List[Dict]:
-    """Get preparations where this plant appears as an ingredient."""
+    """Get preparations where this plant is used (either directly or as ingredient)."""
     db = get_db()
     db.row_factory = lambda cursor, row: dict(zip([col[0] for col in cursor.description], row))
 
+    # Try to find preparations in two ways:
+    # 1. Direct: preparations.plant_id = ?
+    # 2. Via ingredients: preparation_ingredients.plant_id = ?
     rows = db.execute("""
         SELECT DISTINCT 
             p.id, p.name_en, p.name_hi, p.name_mr, p.classical_name,
@@ -452,14 +457,15 @@ def _preparations_for_plant(plant_id: int, k: int = 5) -> List[Dict]:
             p.storage, p.shelf_life,
             p.dosage_json, p.timing, p.anupana, p.notes
         FROM preparations p
-        WHERE p.id IN (
-            SELECT DISTINCT preparation_id 
-            FROM preparation_ingredients pi
-            WHERE pi.plant_id = ?
-        )
+        WHERE p.plant_id = ?
+           OR p.id IN (
+               SELECT DISTINCT preparation_id 
+               FROM preparation_ingredients pi
+               WHERE pi.plant_id = ?
+           )
         ORDER BY p.id
         LIMIT ?
-    """, (plant_id, k)).fetchall()
+    """, (plant_id, plant_id, k)).fetchall()
 
     preps: List[Dict] = []
     for r in rows:
@@ -809,6 +815,9 @@ def _get_session(session_id: Optional[str]) -> Dict[str, Any]:
             "slots": {},
             "last_q": None,
             "lang": None,
+            "returned_prep_ids": set(),  # Track preparation IDs already returned
+            "returned_plant_ids": set(),  # Track plant IDs already returned
+            "asked_questions": set(),     # Track which follow-up questions were asked
             "updated_at": _now(),
         }
         _SESSIONS[session_id] = sess
@@ -816,17 +825,52 @@ def _get_session(session_id: Optional[str]) -> Dict[str, Any]:
     return sess
 
 def _classify_condition(text: str) -> str:
+    """Classify health condition from text (supports English, Hindi, Marathi)."""
     t = (text or "").lower()
-    if any(x in t for x in ("diabetes", "मधुमेह", "मधुमेहा", "sugar")):
+    
+    # Diabetes keywords: English + Hindi (मधुमेह) + Marathi (मधुमेह/साखर)
+    if any(x in t for x in ("diabetes", "sugar", "मधुमेह", "साखर", "ब्लड शुगर", "ठराविक साखर")):
         return "diabetes"
-    if any(x in t for x in ("hypertension", "bp", "blood pressure", "उच्च रक्तदाब", "दाब")):
+    
+    # Hypertension keywords: English + Hindi (उच्च रक्तदाब/दाब) + Marathi (रक्तदाब)
+    if any(x in t for x in ("hypertension", "bp", "blood pressure", "उच्च रक्तदाब", "दाब", "रक्तदाब", "उच्च दाब")):
         return "hypertension"
-    if any(x in t for x in ("cold", "cough", "sore throat", "जुकाम", "खोकला", "कफ")):
+    
+    # Cold/Cough keywords: English + Hindi (जुकाम/खोकला) + Marathi (सर्दी/खोकी)
+    # CRITICAL: Use Marathi script for Marathi words!
+    if any(x in t for x in (
+        # English
+        "cold", "cough", "sore throat", "runny nose", "congestion",
+        # Hindi (Devanagari script)
+        "जुकाम", "खोकला", "कफ", "नाक बहना", "गले में खराश",
+        # Marathi (Devanagari script - DIFFERENT WORDS)
+        "सर्दी", "खोकी", "घसरघस", "नाक वाहणे", "गळ्याला खरास"
+    )):
         return "cold_cough"
-    if any(x in t for x in ("acidity", "gas", "indigestion", "अम्लपित्त", "गॅस", "अपचन")):
+    
+    # Digestion/Acidity keywords: English + Hindi (अम्लपित्त/गॅस) + Marathi (अपचन/गॅस)
+    if any(x in t for x in (
+        # English
+        "acidity", "gas", "indigestion", "heartburn", "bloating",
+        # Hindi
+        "अम्लपित्त", "गॅस", "अपचन", "पेट में जलन",
+        # Marathi
+        "अपचन", "गॅस", "अम्लपित्त", "पोटात जळजळ"
+    )):
         return "digestion"
-    if any(x in t for x in ("arthritis", "joint pain", "संधिवात", "गुडघा दुखी")):
+    
+    # Arthritis/Joint pain keywords: English + Hindi (संधिवात) + Marathi (सांधेदुखी)
+    if any(x in t for x in (
+        # English
+        "arthritis", "joint pain", "joint", "knee pain", "back pain",
+        # Hindi
+        "संधिवात", "गुडघा दुखी", "कमर दर्द", "जोड़ों का दर्द",
+        # Marathi
+        "सांधेदुखी", "गुडघ्याचा दुखी", "पीठीचा दुखी", "संधिरोग"
+    )):
         return "arthritis"
+    
+    # Default to general
     return "general"
 
 _CONDITION_SLOTS = {
@@ -871,21 +915,61 @@ def _missing_optional(sess: Dict[str, Any]) -> list[str]:
     optional = _CONDITION_OPTIONAL.get(cond, ())
     return [k for k in optional if k not in slots]
 
-def _slot_questions(condition: str | None, missing: list[str]) -> list[str]:
+def _slot_questions(condition: str | None, missing: list[str], lang: str = "en", sess: Dict = None) -> list[str]:
     qmap = {
-        "duration": "Since when (days/months/years)?",
-        "trend": "Is it getting better or worse?",
-        "pain_fever_severity": "Any fever/pain severity (none / mild / moderate / severe)?",
-        "severity": "Severity (mild / moderate / severe)?",
-        "age_gender": "Age and gender?",
-        "existing_illness": "Any existing illness (BP/thyroid/asthma etc.)?",
-        "meds": "Are you currently taking any medicines? (name if possible)",
-        "sugar_values": "Do you know your recent fasting/PP sugar or HbA1c? (optional)",
-        "bp_values": "Do you know your recent BP readings? (optional)",
+        "en": {
+            "duration": "Since when (days/months/years)?",
+            "trend": "Is it getting better or worse?",
+            "pain_fever_severity": "Any fever/pain severity (none / mild / moderate / severe)?",
+            "severity": "Severity (mild / moderate / severe)?",
+            "age_gender": "Age and gender?",
+            "existing_illness": "Any existing illness (BP/thyroid/asthma etc.)?",
+            "meds": "Are you currently taking any medicines? (name if possible)",
+            "sugar_values": "Do you know your recent fasting/PP sugar or HbA1c? (optional)",
+            "bp_values": "Do you know your recent BP readings? (optional)",
+        },
+        "hi": {
+            "duration": "यह कितने दिन/महीने/साल से है?",
+            "trend": "क्या यह बेहतर हो रहा है या बदतर?",
+            "pain_fever_severity": "कोई बुखार/दर्द की गंभीरता (कोई नहीं / हल्का / मध्यम / गंभीर)?",
+            "severity": "गंभीरता (हल्का / मध्यम / गंभीर)?",
+            "age_gender": "उम्र और लिंग?",
+            "existing_illness": "कोई मौजूदा बीमारी (BP/थायराइड/अस्थमा आदि)?",
+            "meds": "क्या आप कोई दवा ले रहे हैं? (यदि संभव हो तो नाम)",
+            "sugar_values": "क्या आप अपने हाल के उपवास/PP चीनी या HbA1c को जानते हैं? (वैकल्पिक)",
+            "bp_values": "क्या आप अपने हाल के BP रीडिंग को जानते हैं? (वैकल्पिक)",
+        },
+        "mr": {
+            "duration": "हे कितने दिवस/महीने/वर्षांपूर्वी आहे?",
+            "trend": "हे बरेच चांगले होत आहे किंवा वाईट?",
+            "pain_fever_severity": "कोणताही ताप/दर्द गंभीरता (नाही / हल्का / मध्यम / गंभीर)?",
+            "severity": "गंभीरता (हल्का / मध्यम / गंभीर)?",
+            "age_gender": "वय आणि लिंग?",
+            "existing_illness": "कोणतीही विद्यमान रोग (BP/थायरॉईड/दमा इ.)?",
+            "meds": "आप सध्या कोणतीही औषध घेत आहात? (शक्य असल्यास नाव)",
+            "sugar_values": "तुम्हाला तुमच्या अलीकडील उपवास/PP साखरेची किंवा HbA1c माहिती आहे? (वैकल्पिक)",
+            "bp_values": "तुम्हाला तुमच्या अलीकडील BP रीडिंग माहिती आहे? (वैकल्पिक)",
+        },
     }
 
-    # diabetes/hypertension should not ask fever
-    return [qmap[m] for m in missing if m in qmap]
+    lang = normalize_lang(lang)
+    lang_map = qmap.get(lang, qmap["en"])
+    
+    # Get asked questions from session to avoid repeating
+    asked = sess.get("asked_questions", set()) if sess else set()
+    
+    questions = []
+    for m in missing:
+        if m in lang_map:
+            q = lang_map[m]
+            # Only include if not already asked in this session
+            if q not in asked:
+                questions.append(q)
+                # Track this question as asked
+                if sess:
+                    sess.setdefault("asked_questions", set()).add(q)
+    
+    return questions
 
 
 def _extract_slots(text: str) -> Dict[str, str]:
@@ -1128,7 +1212,22 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
                 if isinstance(v, list) and v and isinstance(v[0], str) and v[0].strip():
                     return v[0].strip().lower()
 
-        # Fallback: last meaningful token (works for "tulsi preparation")
+        # Fallback: look for common plant names in text (works for "turmeric milk preparation")
+        # Common Ayurvedic plant names
+        common_plants = [
+            "turmeric", "haldi", "tulsi", "basil", "neem", "brahmi", "ashwagandha",
+            "amla", "triphala", "giloy", "brahmi", "shankhpushpi", "brahmi",
+            "ginger", "garlic", "black cumin", "fenugreek", "cinnamon",
+            "cardamom", "clove", "pepper", "cumin", "coriander",
+            "gotu kola", "bhumyamalaki", "bhringraj", "bhumi", "kama"
+        ]
+        
+        text_lower = (en_text or "").lower()
+        for plant in common_plants:
+            if plant in text_lower:
+                return plant
+        
+        # Last resort: last meaningful token (works for "tulsi preparation")
         toks = _simple_tokens(en_text)
         return toks[-1].lower() if toks else None
 
@@ -1196,6 +1295,59 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
         plant_id = _find_plant_id(plant_term)
 
         if not plant_id:
+            # Fallback: search for preparation by name (e.g., "Triphala Churna" is not a plant)
+            db = get_db()
+            term_lower = plant_term.lower() if plant_term else ""
+            
+            if term_lower:
+                # Try exact match on preparation name
+                row = db.execute(
+                    "SELECT id, name_en, plant_id FROM preparations WHERE LOWER(name_en) LIKE ? LIMIT 1",
+                    (f"%{term_lower}%",)
+                ).fetchone()
+                
+                if row:
+                    # Found a preparation directly
+                    prep_id = int(row["id"])
+                    prep_name = row["name_en"]
+                    plant_id_from_prep = row["plant_id"] if "plant_id" in row.keys() else None
+                    
+                    # Get prep details
+                    prep_row = db.execute(
+                        "SELECT * FROM preparations WHERE id = ? LIMIT 1",
+                        (prep_id,)
+                    ).fetchone()
+                    
+                    answer_en = f"## {prep_name}\n\n"
+                    if prep_row:
+                        steps = prep_row["preparation_steps"] if "preparation_steps" in prep_row.keys() else ""
+                        dosage = prep_row["dosage_json"] if "dosage_json" in prep_row.keys() else ""
+                        timing = prep_row["timing"] if "timing" in prep_row.keys() else ""
+                        anupana = prep_row["anupana"] if "anupana" in prep_row.keys() else ""
+                        notes = prep_row["notes"] if "notes" in prep_row.keys() else ""
+                        
+                        if steps:
+                            answer_en += f"**How to prepare:**\n{steps}\n\n"
+                        if dosage:
+                            answer_en += f"**Dosage:**\n{dosage}\n\n"
+                        if timing:
+                            answer_en += f"**Timing:** {timing}\n\n"
+                        if anupana:
+                            answer_en += f"**Anupana:** {anupana}\n\n"
+                        if notes:
+                            answer_en += f"**Notes:** {notes}\n\n"
+                    
+                    answer = translate_from_en(answer_en, lang) if lang != "en" else answer_en
+                    
+                    return {
+                        "answer": answer,
+                        "severity": sev,
+                        "followups": [],
+                        "provisional": [dict(prep_row)] if prep_row else [],
+                        "session_id": sess["id"],
+                    }
+            
+            # Still no match - ask for plant name
             msg_en = "Please tell me the plant name for the preparation (e.g., Tulsi, Neem, Amla)."
             msg = translate_from_en(msg_en, lang) if lang != "en" else msg_en
             return {
@@ -1242,17 +1394,21 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
         plant = _fetch_plant_full(plant_id) or {}
         preps = _preparations_for_plant(plant_id, k=3)
 
-        # Your existing builder for plant profile
-        answer_en = build_plant_answer(plant)
+        # Build plant profile response natively in target language (no post-translation)
+        answer = build_plant_answer(plant, lang=lang)
 
         if preps:
-            answer_en += "\n\n🌿 **Preparations available in HerboAI DB:**\n"
+            # Add preparation list (already in target language)
+            prep_label = "🌿 **Preparations available in HerboAI DB:**" if lang == "en" else (
+                "🌿 **HerboAI DB में उपलब्ध तैयारियां:**" if lang == "hi" else
+                "🌿 **HerboAI DB मध्ये उपलब्ध तयारी:**"
+            )
+            answer += f"\n\n{prep_label}\n"
             for p in preps[:3]:
-                nm = p.get("name_en") or p.get("classical_name") or "Preparation"
+                nm = p.get("localized_name") or p.get("name_en") or p.get("classical_name") or "Preparation"
                 form = p.get("form_type") or ""
-                answer_en += f"- {nm}" + (f" ({form})" if form else "") + "\n"
+                answer += f"- {nm}" + (f" ({form})" if form else "") + "\n"
 
-        answer = translate_from_en(answer_en, lang) if lang != "en" else answer_en
         return {
             "answer": answer,
             "severity": sev,
@@ -1284,9 +1440,21 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
     )
     symptom_like = intent in ("symptom", "complaint", "triage") or (not explicit_disease_or_remedy)
 
+    # Debug: Log decision point
+    print(f"[CHAT] intent={intent}, condition={condition}, symptom_like={symptom_like}, explicit={explicit_disease_or_remedy}")
+
     # -----------------------------
     # Provisional retrieval (DB-first schema-correct)
     # disease -> mapping -> preparations
+    # Mapping from condition classifier to searchable disease names
+    CONDITION_TO_DISEASE = {
+        "cold_cough": "common cold",
+        "diabetes": "diabetes",
+        "hypertension": "hypertension",
+        "digestion": "indigestion",
+        "arthritis": "arthritis",
+        "general": None,
+    }
     # -----------------------------
     provisional: list[dict] = []
     try:
@@ -1294,12 +1462,27 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
         disease_term = _extract_disease_term(text_en, entities)
         disease_id = resolve_disease_id(db, disease_term) if isinstance(disease_term, str) else None
 
+        # Debug: Log disease resolution
+        print(f"[CHAT] disease_term={disease_term}, resolved disease_id={disease_id}")
+
         # fallback using coarse condition if disease term doesn't resolve
         if not disease_id and condition and condition != "general":
-            disease_id = resolve_disease_id(db, condition)
+            # Map condition code to disease name (e.g., "cold_cough" -> "common cold")
+            mapped_disease_name = CONDITION_TO_DISEASE.get(condition)
+            if mapped_disease_name:
+                disease_id = resolve_disease_id(db, mapped_disease_name)
+                print(f"[CHAT] Fallback: mapped condition '{condition}' to disease '{mapped_disease_name}', id={disease_id}")
 
         if disease_id:
-            provisional = fetch_preparations_for_disease(db, disease_id, limit=6)
+            all_preps = fetch_preparations_for_disease(db, disease_id, limit=6)
+            print(f"[CHAT] Fetched {len(all_preps)} preps for disease_id={disease_id}")
+            
+            # Filter out already-returned preparations
+            excluded_ids = sess.get("returned_prep_ids", set())
+            print(f"[CHAT] excluded_ids={excluded_ids}, all_preps={len(all_preps)}")
+            
+            provisional = [p for p in all_preps if p.get("id") not in excluded_ids]
+            print(f"[CHAT] After filtering: provisional={len(provisional)} preps, lang={lang}")
 
         # Optional vector fallback if DB mapping yields none
         if not provisional:
@@ -1308,6 +1491,9 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
                 qvec = embed_query(seed if isinstance(seed, str) else text_en)
                 vec_hits = vector_search_preparations_lang(qvec, lang, k=8)
                 ids = [h["id"] for h in vec_hits]
+                # Filter out already-returned preparations
+                excluded_ids = sess.get("returned_prep_ids", set())
+                ids = [id for id in ids if id not in excluded_ids]
                 prep_rows = hydrate_preparations(ids)
                 dist_by_id = {h["id"]: h.get("distance", 0.0) for h in vec_hits}
                 ranked = rank_preparations(
@@ -1321,6 +1507,12 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
                 provisional = []
     except Exception:
         provisional = []
+    
+    # Track returned preparation IDs in session to prevent repeats
+    for prep in provisional:
+        prep_id = prep.get("id")
+        if prep_id:
+            sess.setdefault("returned_prep_ids", set()).add(prep_id)
 
     # -----------------------------
     # Followups: only strict-gate for symptom narrative
@@ -1330,23 +1522,30 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
 
     # Symptom narrative: ask REQUIRED, but still show remedies (hybrid response)
     if symptom_like and req_missing:
-        followups = _slot_questions(condition, req_missing)
+        print(f"[CHAT HYBRID] symptom_like=True, req_missing={req_missing}, provisional={len(provisional)}")
+        followups = _slot_questions(condition, req_missing, lang=lang, sess=sess)
         if not followups:
-            followups = ["Since when (days/months/years)?", "Age and gender?", "Is it getting better or worse?"]
+            if lang == "en":
+                followups = ["Since when (days/months/years)?", "Age and gender?", "Is it getting better or worse?"]
+            elif lang == "hi":
+                followups = ["यह कितने दिन/महीने/साल से है?", "उम्र और लिंग?", "क्या यह बेहतर हो रहा है या बदतर?"]
+            elif lang == "mr":
+                followups = ["हे कितने दिवस/महीने/वर्षांपूर्वी आहे?", "वय आणि लिंग?", "हे बरेच चांगले होत आहे किंवा वाईट?"]
 
         noted = ""
         if slots:
             noted = "✅ Noted: " + "; ".join([f"{k}={v}" for k, v in slots.items()]) + "\n\n"
 
-        response_en = build_hybrid_response(
+        print(f"[RESPONSE_BUILDER HYBRID] Calling with provisional={len(provisional)}, lang={lang}")
+        response = build_hybrid_response(
             severity=sev.get("band", "low"),
             followups=followups,
             provisional=provisional,
+            lang=lang,
         )
         if noted:
-            response_en = f"{noted}{response_en}"
+            response = f"{noted}{response}"
 
-        response = translate_from_en(response_en, lang) if lang != "en" else response_en
         return {
             "answer": response,
             "severity": sev,
@@ -1359,23 +1558,27 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
     # Disease/remedy explicit: NEVER block behind required slots; show final response + optional questions
     sess["stage"] = "ready"
 
+    # Debug: Log before response building
+    print(f"[CHAT FINAL] provisional={len(provisional)} preps, symptom_like={symptom_like}, req_missing={req_missing}")
+
     # Optional questions: for explicit disease/remedy, keep them truly optional
     optional_qs: list[str] = []
     if opt_missing:
-        optional_qs.extend(_slot_questions(condition, opt_missing))
+        optional_qs.extend(_slot_questions(condition, opt_missing, lang=lang, sess=sess))
     # if explicit disease intent, we may add required questions as optional too (but don't gate)
     if explicit_disease_or_remedy and req_missing:
-        optional_qs = _slot_questions(condition, req_missing) + optional_qs
+        optional_qs = _slot_questions(condition, req_missing, lang=lang, sess=sess) + optional_qs
 
     from services.response_builder import build_final_response
-    response_en = build_final_response(
+    print(f"[RESPONSE_BUILDER] Calling with provisional={len(provisional)}, lang={lang}")
+    response = build_final_response(
         severity=sev.get("band", "low"),
         provisional=provisional,
         optional_questions=optional_qs,
         condition=condition,
         slots=slots,
+        lang=lang,
     )
-    response = translate_from_en(response_en, lang) if lang != "en" else response_en
 
     # Structured plants extraction from preparation ingredients (nice for UI)
     structured: dict = {"condition": condition, "preparations": provisional}

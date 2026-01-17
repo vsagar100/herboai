@@ -227,11 +227,11 @@ def create_disease():
         entity_type="disease",
         entity_id=new_id,
         en_fields={
-            "name": data.get("name_en"),
-            "description": data.get("description_en"),
-            "symptoms": data.get("symptoms_en"),
-            "causes": data.get("causes_en"),
-            "precautions": data.get("precautions_en"),
+            "name": payload.get("name_en"),
+            "description": payload.get("description"),
+            "symptoms": payload.get("symptoms"),
+            "causes": payload.get("causes"),
+            "prevention_tips": payload.get("prevention_tips"),
         },
     )
 
@@ -270,16 +270,16 @@ def update_disease(disease_id: int):
         db.commit()
 
         admin_save_with_i18n(
-        entity_type="disease",
-        entity_id=disease_id,
-        en_fields={
-            "name": data.get("name_en"),
-            "description": data.get("description_en"),
-            "symptoms": data.get("symptoms_en"),
-            "causes": data.get("causes_en"),
-            "precautions": data.get("precautions_en"),
-        },
-    )
+            entity_type="disease",
+            entity_id=disease_id,
+            en_fields={
+                "name": payload.get("name_en"),
+                "description": payload.get("description"),
+                "symptoms": payload.get("symptoms"),
+                "causes": payload.get("causes"),
+                "prevention_tips": payload.get("prevention_tips"),
+            },
+        )
 
         row = db.execute("SELECT * FROM diseases WHERE id=?", (disease_id,)).fetchone()
         return jsonify(_row_to_obj(row))

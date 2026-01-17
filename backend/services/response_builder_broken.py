@@ -100,7 +100,6 @@ def _join(items: Sequence[str]) -> str:
         return " and ".join(cleaned)
     return ", ".join(cleaned[:-1]) + f", and {cleaned[-1]}"
 
-
 def _format_list(items: Sequence[str]) -> str:
     """
     Format list-like data safely. If a plain string is passed, avoid
@@ -347,9 +346,102 @@ def build_no_data_answer(user_text: str, lang: str = "en") -> str:
     
     return "Could not find data for this query."
 
+def build_plant_knowledge_snippet(plant: Dict) -> str:
+    """
+    Compact, embedding-friendly plant description that matches the tone
+    of build_plant_answer but without disclaimers or chat framing.
+
+    Used for:
+    - plant_embeddings ETL
+    - RAG context building
+    """
+    name = plant.get("common_name_en") or plant.get("common_name") or "This plant"
+    botanical = plant.get("botanical_name") or ""
+    header = f"{name} ({botanical})" if botanical else name
+
+    parts = [header]
+
+    if plant.get("description"):
+        parts.append(plant["description"])
+
+    if plant.get("parts_used"):
+        parts.append(f"Parts used: {_format_list(plant['parts_used'])}.")
+
+    if plant.get("therapeutic_actions"):
+        parts.append(
+            f"Key actions: {_format_list(plant['therapeutic_actions'])}."
+        )
+
+    rasa = _format_list(plant.get("rasa") or [])
+    guna = _format_list(plant.get("guna") or [])
+    virya = plant.get("virya")
+    vipaka = plant.get("vipaka")
+    dosha = _format_list(plant.get("dosha_effect") or [])
+
+    energetics = []
+    if rasa:
+        energetics.append(f"Rasa (taste): {rasa}")
+    if guna:
+        energetics.append(f"Guna (qualities): {guna}")
+    if virya:
+        energetics.append(f"Virya (potency): {virya}")
+    if vipaka:
+        energetics.append(f"Vipaka (post-digestive effect): {vipaka}")
+    if dosha:
+        energetics.append(f"Dosha impact: {dosha}")
+    if energetics:
+        parts.append("; ".join(energetics) + ".")
+
+    # No disclaimer here – this is pure knowledge text for embeddings / context.
+    return " ".join(p.strip() for p in parts if p and str(p).strip())
+
+def build_disease_knowledge_snippet(disease: Dict) -> str:
+    """
+    Compact, embedding-friendly disease description that aligns with
+    build_remedy_answer's tone but focused only on the condition itself.
+    """
+    name = disease.get("name_en") or "This condition"
+    parts = [f"{name}:"]
+
+    if disease.get("ayurvedic_name"):
+        parts.append(f"Ayurvedic name: {disease['ayurvedic_name']}.")
+
+    if disease.get("description"):
+        parts.append(disease["description"])
+
+    if disease.get("symptoms"):
+        parts.append(
+            f"Typical symptoms: {_format_list(disease['symptoms'])}."
+        )
+    if disease.get("causes"):
+        parts.append(
+            f"Root causes and risk factors: {_format_list(disease['causes'])}."
+        )
+
+    dosha = _format_list(disease.get("dosha_involvement") or [])
+    dhatu = _format_list(disease.get("dhatu_involvement") or [])
+    severity = disease.get("severity_level")
+
+    if dosha:
+        parts.append(f"Dosha involvement: {dosha}.")
+    if dhatu:
+        parts.append(f"Dhatu involvement: {dhatu}.")
+    if severity:
+        parts.append(f"Severity level: {severity}.")
+
+    if disease.get("prevention_tips"):
+        parts.append(
+            f"Prevention and lifestyle tips: {_format_list(disease['prevention_tips'])}."
+        )
+    if disease.get("dietary_recommendations"):
+        parts.append(
+            f"Dietary recommendations: {_format_list(disease['dietary_recommendations'])}."
+        )
+
+    # Again, no generic disclaimer – context only.
+    return " ".join(p.strip() for p in parts if p and str(p).strip())
 
 def _fmt_steps(steps) -> str:
-    """Format preparation steps."""
     if not steps:
         return ""
     if isinstance(steps, list):
@@ -362,7 +454,6 @@ def _fmt_steps(steps) -> str:
 
 
 def _fmt_dosage(dosage) -> str:
-    """Format dosage information."""
     if not dosage:
         return ""
     if isinstance(dosage, dict):
@@ -381,22 +472,14 @@ def _fmt_dosage(dosage) -> str:
         for k in extra_keys[:2]:
             out.append(f"  - {k}: {dosage.get(k)}")
         return "\n".join(out)
-    # if it's a string (already formatted)
+    # if it’s a string (already formatted)
     if isinstance(dosage, str):
         return dosage.strip()
     return ""
 
 
-def _prep_card(p: dict, lang: str = "en") -> str:
-    """Format a preparation card in target language."""
-    lang = normalize_lang(lang)
-    
-    prep_id = p.get("id")
-    if prep_id:
-        name = get_localized_field("preparation", prep_id, "name", lang) or p.get("name_en") or p.get("name") or p.get("classical_name") or "Herbal preparation"
-    else:
-        name = p.get("name_en") or p.get("name") or p.get("classical_name") or "Herbal preparation"
-    
+def _prep_card(p: dict) -> str:
+    name = p.get("name_en") or p.get("name") or p.get("classical_name") or "Herbal preparation"
     form = p.get("form_type") or p.get("category") or ""
     timing = (p.get("timing") or "").strip()
     anupana = (p.get("anupana") or "").strip()
@@ -409,167 +492,73 @@ def _prep_card(p: dict, lang: str = "en") -> str:
     lines.append(f"**{name}**" + (f" ({form})" if form else ""))
 
     if steps:
-        lines.append(f"**{_get_label('steps', lang)}:**")
+        lines.append("**How to prepare:**")
         lines.append(steps)
 
     if dosage:
-        lines.append(f"**{_get_label('dosage', lang)}:**")
+        lines.append("**Dosage (general guidance):**")
         lines.append(dosage)
 
     if timing:
-        lines.append(f"**{_get_label('timing', lang)}:** {timing}")
+        lines.append(f"**Timing:** {timing}")
     if anupana:
-        lines.append(f"**{_get_label('anupana', lang)}:** {anupana}")
+        lines.append(f"**Anupana:** {anupana}")
     if notes:
         lines.append(f"**Notes/Caution:** {notes}")
 
     return "\n".join(lines)
 
 
-def build_hybrid_response(severity: str, followups: list[str], provisional: list[dict], lang: str = "en") -> str:
+def build_hybrid_response(severity: str, followups: list[str], provisional: list[dict]) -> str:
     """
     Used while collecting followups.
     MUST still give useful prep/remedy output.
     """
-    lang = normalize_lang(lang)
     lines = []
-    
-    severity_label = severity.capitalize() if lang == "en" else (
-        severity.capitalize() if lang == "hi" else severity.capitalize()
-    )
-    lines.append(f"🔍 **Assessment:** {severity_label} severity\n")
+    lines.append(f"🔍 **Assessment:** {severity.capitalize()} severity\n")
 
     if provisional:
-        prep_label = _get_label('preparations', lang)
-        lines.append(f"🌿 **{prep_label} (from HerboAI DB):**")
+        lines.append("🌿 **Suggested preparations (from HerboAI DB):**")
         for idx, p in enumerate(provisional[:3], 1):
-            lines.append(f"\n{idx}) " + _prep_card(p, lang))
+            lines.append(f"\n{idx}) " + _prep_card(p))
         lines.append("")
 
     if followups:
-        q_label = "A few quick questions" if lang == "en" else (
-            "कुछ त्वरित प्रश्न" if lang == "hi" else "काही द्रुत प्रश्न"
-        )
-        lines.append(f"❓ **{q_label} (to personalize, optional but helpful):**")
+        lines.append("❓ **A few quick questions (to personalize, optional but helpful):**")
         for i, q in enumerate(followups, 1):
             lines.append(f"{i}. {q}")
         lines.append("")
 
-    disclaimer = _get_label('medical_disclaimer', lang)
-    lines.append(disclaimer)
+    lines.append("⚠️ If symptoms worsen/persist or you have serious symptoms, consult a qualified doctor or AYUSH practitioner.")
     return "\n".join(lines)
 
 
-def build_final_response(
-    severity: str, 
-    provisional: list[dict], 
-    optional_questions: list[str], 
-    condition: str, 
-    slots: dict,
-    lang: str = "en"
-) -> str:
+def build_final_response(severity: str, provisional: list[dict], optional_questions: list[str], condition: str, slots: dict) -> str:
     """
     Final answer after required slots are present.
     """
-    lang = normalize_lang(lang)
     lines = []
-    
-    severity_label = severity.capitalize() if lang == "en" else (
-        severity.capitalize() if lang == "hi" else severity.capitalize()
-    )
-    lines.append(f"🔍 **Assessment:** {severity_label} severity\n")
+    lines.append(f"🔍 **Assessment:** {severity.capitalize()} severity\n")
 
     if condition == "diabetes":
-        if lang == "en":
-            lines.append("🩺 **Diabetes support (AYUSH-friendly, non-emergency):**")
-            lines.append("- Diet: reduce refined carbs/sugar; prefer fiber-rich meals.")
-            lines.append("- Activity: daily walk + consistent sleep.")
-            lines.append("- Don't stop prescribed medicines without doctor advice.\n")
-        elif lang == "hi":
-            lines.append("🩺 **मधुमेह समर्थन (आयुष-अनुकूल, गैर-आपातकालीन):**")
-            lines.append("- आहार: परिष्कृत कार्बोहाइड्रेट/चीनी में कमी करें; फाइबर युक्त भोजन पसंद करें।")
-            lines.append("- गतिविधि: दैनिक चलना + सुसंगत नींद।")
-            lines.append("- डॉक्टर की सलाह के बिना निर्धारित दवाएं बंद न करें।\n")
-        elif lang == "mr":
-            lines.append("🩺 **मधुमेह समर्थन (आयुष-अनुकूल, गैर-आपातकालीन):**")
-            lines.append("- आहार: परिष्कृत कार्बोहाइड्रेट/साखर कमी करा; फाइबर समृद्ध खाना पसंद करा।")
-            lines.append("- क्रिया: दैनिक चालना + सुसंगत झोप।")
-            lines.append("- डॉक्टराच्या सल्ल्याशिवाय विहित औषध बंद करू नका।\n")
+        lines.append("🩺 **Diabetes support (AYUSH-friendly, non-emergency):**")
+        lines.append("- Diet: reduce refined carbs/sugar; prefer fiber-rich meals.")
+        lines.append("- Activity: daily walk + consistent sleep.")
+        lines.append("- Don’t stop prescribed medicines without doctor advice.\n")
 
     if provisional:
-        prep_label = _get_label('preparations', lang)
-        lines.append(f"🌿 **{prep_label} (from HerboAI DB):**")
+        lines.append("🌿 **Preparations (from HerboAI DB):**")
         for idx, p in enumerate(provisional[:5], 1):
-            lines.append(f"\n{idx}) " + _prep_card(p, lang))
+            lines.append(f"\n{idx}) " + _prep_card(p))
         lines.append("")
     else:
-        if lang == "en":
-            lines.append("🌿 I couldn't find a mapped preparation in the current DB for this query.\n")
-        elif lang == "hi":
-            lines.append("🌿 मुझे इस प्रश्न के लिए वर्तमान डीबी में कोई मैप की गई तैयारी नहीं मिल सकी।\n")
-        elif lang == "mr":
-            lines.append("🌿 मला या प्रश्नाकरिता वर्तमान डीबीमध्ये कोणतीही मैप केलेली तयारी सापडली नाही।\n")
+        lines.append("🌿 I couldn’t find a mapped preparation in the current DB for this query.\n")
 
     if optional_questions:
-        opt_label = "Optional" if lang == "en" else (
-            "वैकल्पिक" if lang == "hi" else "वैकल्पिक"
-        )
-        lines.append(f"✅ **{opt_label} (for better personalization):**")
+        lines.append("✅ **Optional (for better personalization):**")
         for i, q in enumerate(optional_questions, 1):
             lines.append(f"{i}. {q}")
         lines.append("")
 
-    disclaimer = _get_label('medical_disclaimer', lang)
-    lines.append(disclaimer)
-    return "\n".join(lines)
-
-
-def build_plant_knowledge_snippet(plant: Dict) -> str:
-    """
-    Build a brief snippet of plant knowledge for context passing to LLM.
-    Used in build_llm_context to create formatted plant summaries.
-    """
-    if not plant:
-        return ""
-    
-    name = plant.get("common_name_en") or plant.get("name") or "Unknown plant"
-    description = plant.get("description") or ""
-    actions = plant.get("therapeutic_actions") or ""
-    
-    # Format therapeutic actions if it's a JSON array
-    if actions and actions.startswith("["):
-        try:
-            import json
-            actions_list = json.loads(actions)
-            actions = ", ".join(actions_list)
-        except:
-            pass
-    
-    lines = [f"**{name}**"]
-    if description:
-        lines.append(f"Description: {description[:200]}")
-    if actions:
-        lines.append(f"Uses: {actions[:200]}")
-    
-    return "\n".join(lines)
-
-
-def build_disease_knowledge_snippet(disease: Dict) -> str:
-    """
-    Build a brief snippet of disease knowledge for context passing to LLM.
-    Used in build_llm_context to create formatted disease summaries.
-    """
-    if not disease:
-        return ""
-    
-    name = disease.get("name_en") or disease.get("name") or "Unknown condition"
-    description = disease.get("description") or ""
-    symptoms = disease.get("symptoms") or ""
-    
-    lines = [f"**{name}**"]
-    if description:
-        lines.append(f"Overview: {description[:200]}")
-    if symptoms:
-        lines.append(f"Symptoms: {symptoms[:200]}")
-    
+    lines.append("⚠️ If symptoms worsen/persist or you have serious symptoms, consult a qualified doctor or AYUSH practitioner.")
     return "\n".join(lines)

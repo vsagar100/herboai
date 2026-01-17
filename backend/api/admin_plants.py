@@ -162,16 +162,19 @@ def admin_create_plant():
         row = db.execute("SELECT * FROM plants WHERE id=?", (new_id,)).fetchone()
 
         # Handle i18n fields and FTS indexing
+        # Extract English fields from the actual database row
         admin_save_with_i18n(
             entity_type="plant",
             entity_id=new_id,
             en_fields={
-                "name": data.get("common_name_en"),
-                "description": data.get("description_en"),
-                "parts_used": data.get("parts_used_en"),
-                "benefits": data.get("benefits_en"),
-                "dosage": data.get("dosage_en"),
-                "precautions": data.get("precautions_en"),
+                "name": payload.get("common_name_en"),
+                "description": payload.get("description"),
+                "therapeutic_actions": payload.get("therapeutic_actions"),
+                "parts_used": payload.get("parts_used"),
+                "rasa": payload.get("rasa"),
+                "guna": payload.get("guna"),
+                "virya": payload.get("virya"),
+                "vipaka": payload.get("vipaka"),
             },
         )
 
@@ -208,17 +211,19 @@ def admin_update_plant(plant_id: int):
     db.commit()
 
     admin_save_with_i18n(
-            entity_type="plant",
-            entity_id=plant_id,
-            en_fields={
-                "name": data.get("common_name_en"),
-                "description": data.get("description_en"),
-                "parts_used": data.get("parts_used_en"),
-                "benefits": data.get("benefits_en"),
-                "dosage": data.get("dosage_en"),
-                "precautions": data.get("precautions_en"),
-            },
-        )
+        entity_type="plant",
+        entity_id=plant_id,
+        en_fields={
+            "name": payload.get("common_name_en"),
+            "description": payload.get("description"),
+            "therapeutic_actions": payload.get("therapeutic_actions"),
+            "parts_used": payload.get("parts_used"),
+            "rasa": payload.get("rasa"),
+            "guna": payload.get("guna"),
+            "virya": payload.get("virya"),
+            "vipaka": payload.get("vipaka"),
+        },
+    )
 
     row = db.execute("SELECT * FROM plants WHERE id=?", (plant_id,)).fetchone()
     return jsonify(_row_to_obj(row))

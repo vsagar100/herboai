@@ -1,14 +1,23 @@
 from db import get_db
 from utils.json_tools import to_json_safe
-from utils.i18n import normalize_lang, fts_table
+from utils.i18n import normalize_lang, fts_table, get_localized_field
 
-def get_preparation(preparation_id: int):
+def get_preparation(preparation_id: int, lang: str = "en"):
+    lang = normalize_lang(lang)
     db = get_db()
     cur = db.cursor()
     cur.execute("SELECT * FROM preparations WHERE id = ?", (preparation_id,))
     row = cur.fetchone()
     cur.close()
-    return to_json_safe(row)
+    
+    if row:
+        result = to_json_safe(row)
+        # Enrich with localized fields from entity_i18n
+        result["localized_name"] = get_localized_field("preparation", preparation_id, "name", lang)
+        result["localized_description"] = get_localized_field("preparation", preparation_id, "description", lang)
+        result["localized_preparation_steps"] = get_localized_field("preparation", preparation_id, "preparation_steps", lang)
+        return result
+    return None
 
 def list_preparations(q: str | None, limit: int, offset: int, lang: str = "en"):
     lang = normalize_lang(lang)

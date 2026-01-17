@@ -158,11 +158,12 @@ def create_preparation():
             entity_type="preparation",
             entity_id=new_id,
             en_fields={
-                "name": data.get("name_en"),
-                "description": data.get("description_en"),
-                "steps": data.get("steps_en"),
-                "dosage": data.get("dosage_en"),
-                "precautions": data.get("precautions_en"),
+                "name": payload.get("name_en"),
+                "preparation_steps": payload.get("preparation_steps"),
+                "dosage_json": payload.get("dosage_json"),
+                "timing": payload.get("timing"),
+                "anupana": payload.get("anupana"),
+                "notes": payload.get("notes"),
             },
         )
 
@@ -221,11 +222,12 @@ def update_preparation(prep_id):
             entity_type="preparation",
             entity_id=prep_id,
             en_fields={
-                "name": data.get("name_en"),
-                "description": data.get("description_en"),
-                "steps": data.get("steps_en"),
-                "dosage": data.get("dosage_en"),
-                "precautions": data.get("precautions_en"),
+                "name": payload.get("name_en"),
+                "preparation_steps": payload.get("preparation_steps"),
+                "dosage_json": payload.get("dosage_json"),
+                "timing": payload.get("timing"),
+                "anupana": payload.get("anupana"),
+                "notes": payload.get("notes"),
             },
         )
 

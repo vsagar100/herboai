@@ -1,6 +1,6 @@
 from db import get_db
 from utils.json_tools import to_json_safe
-from utils.i18n import normalize_lang, fts_table
+from utils.i18n import normalize_lang, fts_table, get_localized_field
 
 def list_diseases(q: str | None, limit: int, offset: int, lang: str = "en"):
     lang = normalize_lang(lang)
@@ -29,10 +29,21 @@ def list_diseases(q: str | None, limit: int, offset: int, lang: str = "en"):
     cur.close()
     return [to_json_safe(r) for r in rows]
 
-def get_disease(disease_id: int):
+def get_disease(disease_id: int, lang: str = "en"):
+    lang = normalize_lang(lang)
     db = get_db()
     cur = db.cursor()
     cur.execute("SELECT * FROM diseases WHERE id = ?", (disease_id,))
     row = cur.fetchone()
     cur.close()
-    return to_json_safe(row)
+    
+    if row:
+        result = to_json_safe(row)
+        # Enrich with localized fields from entity_i18n
+        result["localized_name"] = get_localized_field("disease", disease_id, "name", lang)
+        result["localized_description"] = get_localized_field("disease", disease_id, "description", lang)
+        result["localized_symptoms"] = get_localized_field("disease", disease_id, "symptoms", lang)
+        result["localized_causes"] = get_localized_field("disease", disease_id, "causes", lang)
+        result["localized_prevention_tips"] = get_localized_field("disease", disease_id, "prevention_tips", lang)
+        return result
+    return None
