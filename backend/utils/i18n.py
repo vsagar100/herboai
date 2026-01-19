@@ -97,7 +97,13 @@ def get_localized_field(entity_type: str, entity_id: int, field: str, lang: str)
         if row and row[0]:
             val = row[0]
             if isinstance(val, str):
-                return val.strip()
+                text = val.strip()
+                # Log when we're falling back to English for non-English request
+                if lang != "en" and text:
+                    import logging
+                    logger = logging.getLogger("i18n")
+                    logger.debug(f"[i18n FALLBACK] {entity_type}:{entity_id} {field} for {lang} -> using English column {base_col}")
+                return text
     
     return ""
 

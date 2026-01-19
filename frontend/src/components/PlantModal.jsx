@@ -101,7 +101,7 @@ export default function PlantModal({ open, plant, onClose }) {
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: 36, opacity: 0 }}
           onClick={(e) => e.stopPropagation()}
-          className="bg-gradient-to-br from-emerald-50 via-white to-green-50 w-full max-w-5xl rounded-2xl shadow-xl overflow-hidden ring-1 ring-black/5"
+          className="bg-gradient-to-br from-emerald-50 via-white to-green-50 w-full max-w-5xl max-h-[90vh] flex flex-col rounded-2xl shadow-xl overflow-hidden ring-1 ring-black/5"
         >
           {/* Header */}
           <div className="flex items-center justify-between px-5 py-4 border-b bg-white/70 backdrop-blur-md">
@@ -119,7 +119,7 @@ export default function PlantModal({ open, plant, onClose }) {
           </div>
 
           {/* Content */}
-          <div className="max-h-[80vh] overflow-y-auto p-5 space-y-5">
+          <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-5">
             {/* hero row */}
             <div className="grid grid-cols-12 gap-4">
               <div className="col-span-12 md:col-span-4">

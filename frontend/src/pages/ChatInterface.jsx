@@ -178,15 +178,13 @@ function transliterateToDevanagari(input) {
 }
 
 /** Left Suggestions panel (durable + modular) */
-const SuggestionPanel = ({ onUse }) => {
-  const diseases = ["Diabetes", "Common Cold", "Arthritis", "Hypertension", "Indigestion"];
-  const preparations = [
-    "How to prepare Gudmar decoction?",
-    "Turmeric milk preparation",
-    "Triphala powder dosage",
-    "Neem oil usage for skin",
-  ];
-  const plants = ["Tell me about Ashwagandha", "Benefits of Turmeric", "Uses of Amla", "Neem for acne"];
+const SuggestionPanel = ({ onUse, t }) => {
+  const fallback = translations.en;
+  const sug = t?.chat?.suggestions || fallback.chat.suggestions;
+
+  const diseases = sug.conditions || [];
+  const preparations = sug.preparations || [];
+  const plants = sug.plants || [];
 
   const Chip = ({ label }) => (
     <button
@@ -200,16 +198,16 @@ const SuggestionPanel = ({ onUse }) => {
   return (
     <div className="h-full flex flex-col gap-6">
       <div>
-        <h3 className="text-sm font-semibold text-green-700 mb-3">Quick Conditions</h3>
+        <h3 className="text-sm font-semibold text-green-700 mb-3">{sug.quickConditionsTitle}</h3>
         <div className="flex flex-wrap gap-2">
           {diseases.map((d) => (
-            <Chip key={d} label={`I have ${d.toLowerCase()}. What helps?`} />
+            <Chip key={d} label={d} />
           ))}
         </div>
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-green-700 mb-3">Preparations</h3>
+        <h3 className="text-sm font-semibold text-green-700 mb-3">{sug.preparationsTitle}</h3>
         <div className="flex flex-wrap gap-2">
           {preparations.map((p) => (
             <Chip key={p} label={p} />
@@ -218,7 +216,7 @@ const SuggestionPanel = ({ onUse }) => {
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-green-700 mb-3">Plants</h3>
+        <h3 className="text-sm font-semibold text-green-700 mb-3">{sug.plantsTitle}</h3>
         <div className="flex flex-wrap gap-2">
           {plants.map((p) => (
             <Chip key={p} label={p} />
@@ -227,14 +225,14 @@ const SuggestionPanel = ({ onUse }) => {
       </div>
 
       <div className="mt-auto text-xs text-gray-500">
-        Tips: Try mixing English/Hindi/Marathi. Example: “मधुमेह साठी काय घ्यावं?”
+        {sug.tips}
       </div>
     </div>
   );
 };
 
 export default function ChatInterface() {
-  const [state] = useGlobalState();
+  const [state, store] = useGlobalState();
   const t = translations[state.language] || translations.en;
 
   const [messages, setMessages] = useState([]);
@@ -249,6 +247,40 @@ export default function ChatInterface() {
   const [translitLang, setTranslitLang] = useState("mr"); // "mr" | "hi"
   // small UI dropdown
   const [translitMenuOpen, setTranslitMenuOpen] = useState(false);
+
+  // Sync translit language with global language when global language changes (from Header dropdown)
+  useEffect(() => {
+    if (state.language === "hi") {
+      setTranslitLang("hi");
+      // Auto-enable translit when switching to Hindi/Marathi
+      if (state.language !== "en") {
+        setTranslitEnabled(true);
+      }
+    } else if (state.language === "mr") {
+      setTranslitLang("mr");
+      // Auto-enable translit when switching to Hindi/Marathi
+      if (state.language !== "en") {
+        setTranslitEnabled(true);
+      }
+    } else if (state.language === "en") {
+      // When switching back to English, disable translit
+      setTranslitEnabled(false);
+    }
+  }, [state.language]);
+
+  // When translit language changes, update global language to match
+  const handleTranslitLangChange = (lang) => {
+    setTranslitLang(lang);
+    store.setLanguage(lang); // Sync global language
+    setTranslitEnabled(true); // Enable translit when user selects a language
+  };
+
+  const maybeAutoSetLanguage = (value) => {
+    if (!value || state.language !== "en") return;
+    if (!isDevanagariText(value)) return;
+    const preferred = translitEnabled ? translitLang : "hi";
+    store.setLanguage(preferred);
+  };
 
   const translitPreview = useMemo(() => {
     if (!translitEnabled) return "";
@@ -308,6 +340,21 @@ export default function ChatInterface() {
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, [translitMenuOpen]);
+
+  // Listen for language changes from Header
+  useEffect(() => {
+    const onLanguageChanged = (e) => {
+      const lang = e?.detail?.language;
+      if (lang === "en") {
+        setTranslitEnabled(false);
+      } else if (lang === "hi" || lang === "mr") {
+        setTranslitLang(lang);
+        setTranslitEnabled(true);
+      }
+    };
+    window.addEventListener("language:changed", onLanguageChanged);
+    return () => window.removeEventListener("language:changed", onLanguageChanged);
+  }, []);
 
   // ----- Download handlers -----
   function downloadAsText(message) {
@@ -388,7 +435,12 @@ export default function ChatInterface() {
     try {
       const { data } = await api.post(
         "/query",
-        { text: finalText, session_id: sessionId, lang: state.language },
+        {
+          text: finalText,
+          session_id: sessionId,
+          lang: state.language,
+          language: state.language,
+        },
         { headers: { "x-session-id": sessionId } }
       );
 
@@ -476,7 +528,7 @@ export default function ChatInterface() {
           style={{ maxHeight: `calc(100vh - ${64 + (headerHidden ? 0 : 84)}px)` }}
         >
           <div className="w-full h-full overflow-y-auto pr-2 pb-28">
-            <SuggestionPanel onUse={(q) => send(q)} />
+            <SuggestionPanel onUse={(q) => send(q)} t={t} />
           </div>
         </aside>
 
@@ -666,7 +718,11 @@ export default function ChatInterface() {
                 <input
                   type="text"
                   value={text}
-                  onChange={(e) => setText(e.target.value)}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setText(next);
+                    maybeAutoSetLanguage(next);
+                  }}
                   onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && send()}
                   placeholder="Type your message... (English/Hindi/Marathi)"
                   className="flex-1 px-4 py-3 rounded-full border border-green-200 focus:outline-none focus:ring-2 focus:ring-green-400 bg-white shadow-sm placeholder:text-gray-400 transition-all"
@@ -679,13 +735,17 @@ export default function ChatInterface() {
                     whileHover={{ scale: 1.04 }}
                     whileTap={{ scale: 0.96 }}
                     onClick={() => setTranslitMenuOpen((v) => !v)}
-                    className="flex items-center gap-2 px-4 py-3 rounded-full bg-white border border-green-200 shadow-sm hover:bg-green-50 text-gray-700"
-                    title="Transliteration settings (offline)"
+                    className={`flex items-center gap-2 px-4 py-3 rounded-full border shadow-sm transition-colors ${
+                      translitEnabled
+                        ? "bg-green-50 border-green-300 text-green-700 hover:bg-green-100"
+                        : "bg-white border-green-200 text-gray-700 hover:bg-green-50"
+                    }`}
+                    title="Language & Transliteration settings"
                     type="button"
                   >
                     <Keyboard className="w-4 h-4" />
                     <span className="hidden sm:inline text-sm font-medium">
-                      {translitEnabled ? "Translit ON" : "Translit OFF"}
+                      {state.language === "mr" ? "मराठी" : state.language === "hi" ? "हिंदी" : "English"}
                     </span>
                     {translitEnabled ? <ToggleRight className="w-4 h-4 text-green-600" /> : <ToggleLeft className="w-4 h-4" />}
                   </motion.button>
@@ -724,29 +784,43 @@ export default function ChatInterface() {
                       </div>
 
                       <div className="mt-3 flex items-center justify-between">
-                        <div className="text-sm text-gray-700">Convert to</div>
+                        <div className="text-sm text-gray-700">Query Language</div>
                         <div className="flex gap-2">
                           <button
-                            onClick={() => setTranslitLang("mr")}
+                            onClick={() => handleTranslitLangChange("mr")}
                             className={`px-3 py-1.5 rounded-full text-sm border ${
-                              translitLang === "mr"
-                                ? "bg-green-50 border-green-200 text-green-700"
+                              state.language === "mr"
+                                ? "bg-green-50 border-green-200 text-green-700 font-medium"
                                 : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
                             }`}
                             type="button"
+                            title="Set query language to Marathi"
                           >
-                            Marathi
+                            मराठी
                           </button>
                           <button
-                            onClick={() => setTranslitLang("hi")}
+                            onClick={() => handleTranslitLangChange("hi")}
                             className={`px-3 py-1.5 rounded-full text-sm border ${
-                              translitLang === "hi"
-                                ? "bg-green-50 border-green-200 text-green-700"
+                              state.language === "hi"
+                                ? "bg-green-50 border-green-200 text-green-700 font-medium"
                                 : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
                             }`}
                             type="button"
+                            title="Set query language to Hindi"
                           >
-                            Hindi
+                            हिंदी
+                          </button>
+                          <button
+                            onClick={() => { store.setLanguage("en"); setTranslitEnabled(false); }}
+                            className={`px-3 py-1.5 rounded-full text-sm border ${
+                              state.language === "en"
+                                ? "bg-blue-50 border-blue-200 text-blue-700 font-medium"
+                                : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
+                            }`}
+                            type="button"
+                            title="Set query language to English"
+                          >
+                            English
                           </button>
                         </div>
                       </div>

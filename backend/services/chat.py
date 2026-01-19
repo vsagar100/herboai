@@ -1057,8 +1057,12 @@ def _text_for_intent(user_text: str, lang: str) -> str:
     if lang == "en":
         return user_text
     try:
-        return translate_to_en(user_text, lang_hint=lang)
-    except Exception:
+        result = translate_to_en(user_text, lang_hint=lang)
+        if result == user_text and lang != "en":
+            log.warning(f"[Translation Fallback] Marathi->EN translation returned original text for: {user_text[:50]}")
+        return result
+    except Exception as e:
+        log.error(f"[Translation Error] Exception in translate_to_en: {e}", exc_info=True)
         return user_text
 
 
@@ -1127,6 +1131,33 @@ def embed_query(text: str) -> bytes:
     """
     return _embed_384(text)
 
+def get_language_aware_similarity_threshold(session: dict, current_lang: str) -> float:
+    """
+    Return similarity threshold that adjusts based on language switching.
+    
+    When user just switched language, use a HIGHER threshold (stricter matching)
+    to avoid pulling in results from previous language's context.
+    
+    Args:
+        session: Current session dict
+        current_lang: Current language ('en', 'hi', 'mr')
+    
+    Returns:
+        Float similarity threshold (0.0-1.0). Higher = stricter filtering.
+    """
+    previous_lang = session.get("lang")
+    last_query = session.get("last_q")
+    
+    # If language just switched, be stricter to avoid context bleed
+    if previous_lang and previous_lang != current_lang:
+        # Use 0.65+ for cross-language searches (very strict)
+        print(f"[SIMILARITY_THRESHOLD] Language switched {previous_lang}->{current_lang}, using strict threshold 0.65")
+        return 0.65
+    
+    # Same language: use normal threshold
+    # 0.45 allows broader matching for follow-up questions within same language
+    return 0.45
+
 def looks_new_query(text: str) -> bool:
     t = (text or "").strip().lower()
     # short answers should NEVER reset conversation
@@ -1142,6 +1173,7 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
       - Disease/remedy intent returns DB-mapped preparations immediately.
       - Symptom narrative can ask followups, but still returns provisional remedies.
       - Never relies on disease name embedded in preparations table.
+      - Language-aware: clears context when language changes.
     """
     user_text = (user_text or "").strip()
     if not user_text:
@@ -1155,13 +1187,33 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
 
     # -----------------------------
     # Language: respect explicit; otherwise detect once and keep stable in session
+    # CRITICAL: Handle language switching by resetting context intelligently
     # -----------------------------
     sess = _get_session(session_id)
+    old_lang = sess.get("lang")
     if lang:
         lang = normalize_lang(lang)
     else:
         # prefer stable session language if already known
         lang = normalize_lang(sess.get("lang") or detect_language(user_text))
+    
+    # INTELLIGENT LANGUAGE SWITCH DETECTION:
+    # When user changes language, treat as a fresh conversation context
+    # but keep useful metadata like medication history (if any)
+    if old_lang and old_lang != lang:
+        print(f"[LANGUAGE SWITCH] {old_lang} -> {lang}")
+        # Clear conversation state that depends on language/condition
+        sess["returned_prep_ids"] = set()  # Clear preparation history
+        sess["returned_plant_ids"] = set()  # Clear plant history
+        
+        # CRITICAL: Reset these to force fresh condition detection
+        sess["condition"] = None  # Will be re-detected from new language query
+        sess["slots"] = {}  # Clear age/gender/other slots from previous language
+        sess["stage"] = "initial"  # Reset to initial stage
+        sess["last_q"] = None  # Clear previous question
+        
+        print(f"[LANGUAGE SWITCH] Cleared session state for fresh context in {lang}")
+    
     sess["lang"] = lang
     sess["last_q"] = user_text
 
@@ -1490,12 +1542,20 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
                 seed = condition if condition != "general" else text_en
                 qvec = embed_query(seed if isinstance(seed, str) else text_en)
                 vec_hits = vector_search_preparations_lang(qvec, lang, k=8)
-                ids = [h["id"] for h in vec_hits]
+                
+                # Apply language-aware similarity filtering
+                # When language switched, be stricter about which results to accept
+                similarity_threshold = get_language_aware_similarity_threshold(sess, lang)
+                filtered_hits = [h for h in vec_hits if h.get("distance", 0.0) <= (1.0 - similarity_threshold)]
+                
+                print(f"[CHAT VEC] Language={lang}, similarity_threshold={similarity_threshold}, filtered {len(vec_hits)} -> {len(filtered_hits)} hits")
+                
+                ids = [h["id"] for h in filtered_hits]
                 # Filter out already-returned preparations
                 excluded_ids = sess.get("returned_prep_ids", set())
                 ids = [id for id in ids if id not in excluded_ids]
                 prep_rows = hydrate_preparations(ids)
-                dist_by_id = {h["id"]: h.get("distance", 0.0) for h in vec_hits}
+                dist_by_id = {h["id"]: h.get("distance", 0.0) for h in filtered_hits}
                 ranked = rank_preparations(
                     query_tags=[condition],
                     candidates=prep_rows,
@@ -1505,7 +1565,10 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
                 provisional = ranked[:3]
             except Exception:
                 provisional = []
-    except Exception:
+    except Exception as e:
+        print(f"[CHAT] ERROR in provisional retrieval: {type(e).__name__}: {str(e)[:200]}")
+        import traceback
+        traceback.print_exc()
         provisional = []
     
     # Track returned preparation IDs in session to prevent repeats

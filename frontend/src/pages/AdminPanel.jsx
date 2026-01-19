@@ -108,7 +108,6 @@ const NAV = [
   { key: "plants", label: "Plants" },
   { key: "diseases", label: "Diseases" },
   { key: "preparations", label: "Preparations" },
-  { key: "systems", label: "AYUSH Systems" },
 ];
 
 function AdminShell({ current, setCurrent, children }) {
@@ -117,20 +116,6 @@ function AdminShell({ current, setCurrent, children }) {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-emerald-50 via-white to-white">
-      <header className="sticky top-0 z-40 border-b border-slate-100 bg-white/70 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow">🌿</div>
-            <div>
-              <div className="text-sm font-semibold text-emerald-700">HerboAI</div>
-              <div className="text-xs text-slate-500">Admin Panel</div>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <OutlineButton onClick={()=>{ localStorage.removeItem("herboai_token"); location.reload(); }}>Logout</OutlineButton>
-          </div>
-        </div>
-      </header>
 
       <div className="mx-auto grid max-w-7xl grid-cols-1 gap-6 px-4 py-6 md:grid-cols-12">
         <aside className="md:col-span-3 lg:col-span-2">
@@ -154,7 +139,6 @@ function AdminShell({ current, setCurrent, children }) {
         </main>
       </div>
 
-      <footer className="border-t border-slate-100 py-6 text-center text-sm text-slate-500">© {new Date().getFullYear()} HerboAI </footer>
     </div>
   );
 }
@@ -334,11 +318,11 @@ function ConfirmModal({ open, title="Confirm", message, onCancel, onConfirm }) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onCancel}>
-      <div onClick={e=>e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white shadow-2xl ring-1 ring-slate-100">
+      <div onClick={e=>e.stopPropagation()} className="w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-100">
         <div className="border-b px-5 py-4">
           <h3 className="text-lg font-semibold">{title}</h3>
         </div>
-        <div className="p-5 text-slate-700">{message}</div>
+        <div className="flex-1 min-h-0 overflow-y-auto p-5 text-slate-700">{message}</div>
         <div className="flex justify-end gap-2 px-5 pb-5">
           <OutlineButton onClick={onCancel}>Cancel</OutlineButton>
           <Button className="!bg-gradient-to-b from-rose-500 to-rose-600" onClick={onConfirm}>Delete</Button>
@@ -443,14 +427,14 @@ function PlantFormModal({ open, initial, onClose, onSaved }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div onClick={e => e.stopPropagation()} className="w-full max-w-5xl rounded-2xl bg-white shadow-2xl ring-1 ring-slate-100">
+      <div onClick={e => e.stopPropagation()} className="w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-100">
         <div className="flex items-center justify-between border-b px-5 py-4">
           <h3 className="text-lg font-semibold">{form.id ? "Edit Plant" : "Add Plant"}</h3>
           <button className="rounded-full p-2 hover:bg-slate-100" onClick={onClose} aria-label="Close">✕</button>
         </div>
 
-        <form onSubmit={handleSave}>
-          <div className="max-h-[70vh] overflow-y-auto p-5">
+        <form onSubmit={handleSave} className="flex h-full flex-col">
+          <div className="flex-1 min-h-0 overflow-y-auto p-5">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div>
                 <label className="mb-1 block text-sm font-medium">Botanical Name *</label>

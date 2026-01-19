@@ -3,11 +3,16 @@ import json
 from db import get_db
 from utils.i18n import normalize_lang, build_fts_content
 from utils.i18n import fts_table, vec_table
+from sentence_transformers import SentenceTransformer
+from sqlite_vec import serialize_float32
 
-# NOTE: you already have an embedder in your codebase producing 384-d vectors.
-# We will wire this function to your existing embed_384 implementation once we patch chat/embedding module.
-def embed_384(text: str):
-    raise RuntimeError("embed_384 not wired yet - will be wired after chat/embed module is re-uploaded")
+# Cache the model globally for performance (same as admin_plants.py)
+_model = SentenceTransformer("all-MiniLM-L6-v2")  # CPU-friendly, 384-dim
+
+def embed_384(text: str) -> bytes:
+    """Generate a 384-dimensional embedding and serialize for sqlite-vec."""
+    vec = _model.encode(text, normalize_embeddings=True)
+    return serialize_float32(vec.tolist())
 
 def _i18n_text(entity_type: str, entity_id: int, lang: str) -> dict[str, str]:
     db = get_db()
@@ -51,13 +56,10 @@ def rebuild_vec_for_entity(entity_type: str, entity_id: int) -> None:
         vec = embed_384(text)
         name = fields.get("name", "")[:200] if fields.get("name") else ""
 
+        # Virtual tables (vec0) don't support UPSERT, so DELETE then INSERT
+        db.execute(f"DELETE FROM {vt} WHERE {id_col}=?", (entity_id,))
         db.execute(
-            f"""
-            INSERT INTO {vt}({id_col}, name, embedding)
-            VALUES(?,?,?)
-            ON CONFLICT({id_col})
-            DO UPDATE SET name=excluded.name, embedding=excluded.embedding
-            """,
+            f"INSERT INTO {vt}({id_col}, name, embedding) VALUES(?,?,?)",
             (entity_id, name, vec),
         )
     db.commit()

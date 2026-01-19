@@ -1,9 +1,31 @@
 // src/store.js
 import { useState, useEffect } from "react";
 
+const STORAGE_KEYS = {
+  language: "herboai_lang",
+};
+
+const loadPersistedLanguage = () => {
+  try {
+    if (typeof window === "undefined") return "en";
+    return localStorage.getItem(STORAGE_KEYS.language) || "en";
+  } catch {
+    return "en";
+  }
+};
+
+const persistLanguage = (language) => {
+  try {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(STORAGE_KEYS.language, language);
+  } catch {
+    // Ignore storage failures (private mode, etc.)
+  }
+};
+
 const createStore = () => {
   let state = {
-    language: "en",
+    language: loadPersistedLanguage(),
     theme: "light",
     sidebarOpen: false,
     user: null,
@@ -22,7 +44,10 @@ const createStore = () => {
     getState,
     setState,
     subscribe,
-    setLanguage: (language) => setState({ language }),
+    setLanguage: (language) => {
+      persistLanguage(language);
+      setState({ language });
+    },
     setSidebarOpen: (sidebarOpen) => setState({ sidebarOpen }),
     setUser: (user) => setState({ user }),
   };

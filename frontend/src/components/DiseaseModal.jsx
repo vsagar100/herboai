@@ -39,7 +39,7 @@ function ModalShell({ open, title, onClose, children }) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
-      <div className="w-full max-w-3xl rounded-3xl bg-white shadow-xl">
+      <div className="w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden rounded-3xl bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
           <div className="text-lg font-semibold text-slate-800">{title}</div>
           <button
@@ -50,7 +50,7 @@ function ModalShell({ open, title, onClose, children }) {
             ✕
           </button>
         </div>
-        <div className="px-6 py-5">{children}</div>
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5">{children}</div>
       </div>
     </div>
   );

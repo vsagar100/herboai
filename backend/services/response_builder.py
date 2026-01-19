@@ -361,19 +361,45 @@ def _fmt_steps(steps) -> str:
     return ""
 
 
-def _fmt_dosage(dosage) -> str:
+def _try_parse_json_text(value):
+    """Best-effort JSON parser for values that may be JSON-encoded strings."""
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return value
+    if not isinstance(value, str):
+        return value
+    s = value.strip()
+    if not s:
+        return value
+    if not (s.startswith("{") or s.startswith("[")):
+        return value
+    try:
+        return json.loads(s)
+    except Exception:
+        return value
+
+
+def _fmt_dosage(dosage, lang: str = "en") -> str:
     """Format dosage information."""
+    lang = normalize_lang(lang)
     if not dosage:
         return ""
     if isinstance(dosage, dict):
+        labels = {
+            "en": {"adult": "Adult", "child": "Child"},
+            "hi": {"adult": "वयस्क", "child": "बच्चे"},
+            "mr": {"adult": "प्रौढ", "child": "मुलं"},
+        }
+        lc = labels.get(lang, labels["en"])
         out = []
         adult = dosage.get("adult")
         child = dosage.get("child")
         general = dosage.get("general")
         if adult:
-            out.append(f"  - Adult: {adult}")
+            out.append(f"  - {lc['adult']}: {adult}")
         if child:
-            out.append(f"  - Child: {child}")
+            out.append(f"  - {lc['child']}: {child}")
         if general and not (adult or child):
             out.append(f"  - {general}")
         # show a couple more keys if present
@@ -394,16 +420,27 @@ def _prep_card(p: dict, lang: str = "en") -> str:
     prep_id = p.get("id")
     if prep_id:
         name = get_localized_field("preparation", prep_id, "name", lang) or p.get("name_en") or p.get("name") or p.get("classical_name") or "Herbal preparation"
+        # Also try to get localized steps, dosage, notes if available
+        steps_localized = get_localized_field("preparation", prep_id, "preparation_steps", lang)
+        dosage_localized = get_localized_field("preparation", prep_id, "dosage_json", lang)
+        notes_localized = get_localized_field("preparation", prep_id, "notes", lang)
     else:
         name = p.get("name_en") or p.get("name") or p.get("classical_name") or "Herbal preparation"
+        steps_localized = ""
+        dosage_localized = ""
+        notes_localized = ""
     
     form = p.get("form_type") or p.get("category") or ""
     timing = (p.get("timing") or "").strip()
     anupana = (p.get("anupana") or "").strip()
     notes = (p.get("notes") or "").strip()
 
-    steps = _fmt_steps(p.get("preparation_steps"))
-    dosage = _fmt_dosage(p.get("dosage_json"))
+    # Use localized versions if available, otherwise use database versions
+    steps = _fmt_steps(steps_localized or p.get("preparation_steps"))
+    dosage_val = dosage_localized if dosage_localized else p.get("dosage_json")
+    dosage_val = _try_parse_json_text(dosage_val)
+    dosage = _fmt_dosage(dosage_val, lang=lang)
+    notes = notes_localized or notes
 
     lines = []
     lines.append(f"**{name}**" + (f" ({form})" if form else ""))
@@ -421,7 +458,8 @@ def _prep_card(p: dict, lang: str = "en") -> str:
     if anupana:
         lines.append(f"**{_get_label('anupana', lang)}:** {anupana}")
     if notes:
-        lines.append(f"**Notes/Caution:** {notes}")
+        notes_label = "Notes/Caution" if lang == "en" else ("नोट्स/सावधानी" if lang == "hi" else "टीप/सावधगिरी")
+        lines.append(f"**{notes_label}:** {notes}")
 
     return "\n".join(lines)
 
@@ -470,6 +508,7 @@ def build_final_response(
 ) -> str:
     """
     Final answer after required slots are present.
+    All content is now fully localized - no hardcoded English mixed in.
     """
     lang = normalize_lang(lang)
     lines = []
@@ -479,22 +518,12 @@ def build_final_response(
     )
     lines.append(f"🔍 **Assessment:** {severity_label} severity\n")
 
-    if condition == "diabetes":
-        if lang == "en":
-            lines.append("🩺 **Diabetes support (AYUSH-friendly, non-emergency):**")
-            lines.append("- Diet: reduce refined carbs/sugar; prefer fiber-rich meals.")
-            lines.append("- Activity: daily walk + consistent sleep.")
-            lines.append("- Don't stop prescribed medicines without doctor advice.\n")
-        elif lang == "hi":
-            lines.append("🩺 **मधुमेह समर्थन (आयुष-अनुकूल, गैर-आपातकालीन):**")
-            lines.append("- आहार: परिष्कृत कार्बोहाइड्रेट/चीनी में कमी करें; फाइबर युक्त भोजन पसंद करें।")
-            lines.append("- गतिविधि: दैनिक चलना + सुसंगत नींद।")
-            lines.append("- डॉक्टर की सलाह के बिना निर्धारित दवाएं बंद न करें।\n")
-        elif lang == "mr":
-            lines.append("🩺 **मधुमेह समर्थन (आयुष-अनुकूल, गैर-आपातकालीन):**")
-            lines.append("- आहार: परिष्कृत कार्बोहाइड्रेट/साखर कमी करा; फाइबर समृद्ध खाना पसंद करा।")
-            lines.append("- क्रिया: दैनिक चालना + सुसंगत झोप।")
-            lines.append("- डॉक्टराच्या सल्ल्याशिवाय विहित औषध बंद करू नका।\n")
+    # Build condition-specific advice using localized labels
+    # This replaces hardcoded English content with a more flexible system
+    condition_advice = _build_condition_advice(condition, lang)
+    if condition_advice:
+        lines.append(condition_advice)
+        lines.append("")
 
     if provisional:
         prep_label = _get_label('preparations', lang)
@@ -522,6 +551,105 @@ def build_final_response(
     disclaimer = _get_label('medical_disclaimer', lang)
     lines.append(disclaimer)
     return "\n".join(lines)
+
+
+def _build_condition_advice(condition: str, lang: str = "en") -> str:
+    """
+    Build condition-specific lifestyle advice in target language.
+    Fully localized - no hardcoded English content.
+    """
+    lang = normalize_lang(lang)
+    
+    # Mapping of conditions to localized advice
+    advice_map = {
+        "diabetes": {
+            "en": [
+                "🩺 **Diabetes support (AYUSH-friendly, non-emergency):**",
+                "- Diet: reduce refined carbs/sugar; prefer fiber-rich meals.",
+                "- Activity: daily walk + consistent sleep.",
+                "- Don't stop prescribed medicines without doctor advice.",
+            ],
+            "hi": [
+                "🩺 **मधुमेह समर्थन (आयुष-अनुकूल, गैर-आपातकालीन):**",
+                "- आहार: परिष्कृत कार्बोहाइड्रेट/चीनी में कमी करें; फाइबर युक्त भोजन पसंद करें।",
+                "- गतिविधि: दैनिक चलना + सुसंगत नींद।",
+                "- डॉक्टर की सलाह के बिना निर्धारित दवाएं बंद न करें।",
+            ],
+            "mr": [
+                "🩺 **मधुमेह समर्थन (आयुष-अनुकूल, गैर-आपातकालीन):**",
+                "- आहार: परिष्कृत कार्बोहाइड्रेट/साखर कमी करा; फाइबर समृद्ध खाना पसंद करा।",
+                "- क्रिया: दैनिक चालना + सुसंगत झोप।",
+                "- डॉक्टराच्या सल्ल्याशिवाय विहित औषध बंद करू नका।",
+            ],
+        },
+        "hypertension": {
+            "en": [
+                "🩺 **High Blood Pressure support (AYUSH-friendly, non-emergency):**",
+                "- Diet: reduce salt intake; increase potassium-rich foods.",
+                "- Stress: daily meditation or yoga.",
+                "- Continue prescribed medications under doctor's supervision.",
+            ],
+            "hi": [
+                "🩺 **उच्च रक्तचाप समर्थन (आयुष-अनुकूल, गैर-आपातकालीन):**",
+                "- आहार: नमक का सेवन कम करें; पोटेशियम युक्त खाद्य पदार्थ बढ़ाएं।",
+                "- तनाव: दैनिक ध्यान या योग।",
+                "- डॉक्टर की देखरेख में निर्धारित दवाएं जारी रखें।",
+            ],
+            "mr": [
+                "🩺 **उच्च रक्तदाब समर्थन (आयुष-अनुकूल, गैर-आपातकालीन):**",
+                "- आहार: मीठ्यांचा सेवन कमी करा; पोटेशियम समृद्ध अन्न वाढवा।",
+                "- तणाव: दैनिक ध्यान किंवा योग।",
+                "- डॉक्टराच्या देखरेखीखाली विहित औषध चालू ठेवा।",
+            ],
+        },
+        "arthritis": {
+            "en": [
+                "🩺 **Joint/Arthritis support (AYUSH-friendly, non-emergency):**",
+                "- Movement: gentle stretches and low-impact exercise.",
+                "- Warmth: warm oil massage (abhyanga) may help.",
+                "- Avoid: cold foods and heavy/fried meals.",
+            ],
+            "hi": [
+                "🩺 **जोड़/गठिया समर्थन (आयुष-अनुकूल, गैर-आपातकालीन):**",
+                "- आंदोलन: हल्के व्यायाम और कम प्रभाव वाली कसरत।",
+                "- गर्माहट: गर्म तेल की मालिश (अभ्यंग) मदद कर सकती है।",
+                "- बचें: ठंडे खाद्य और भारी/तले हुए भोजन।",
+            ],
+            "mr": [
+                "🩺 **सांध/गठिया समर्थन (आयुष-अनुकूल, गैर-आपातकालीन):**",
+                "- गती: हल्के व्यायाम आणि कमी प्रभाव वाले व्यायाम।",
+                "- उष्णता: गर्म तेलाची मालिश (अभ्यंग) मदत करू शकते।",
+                "- टाळा: थंड खाद्य आणि जड/तळलेले भोजन।",
+            ],
+        },
+        "cold_cough": {
+            "en": [
+                "🩺 **Cold/Cough support (AYUSH-friendly, non-emergency):**",
+                "- Rest: prioritize sleep and avoid exposure to cold.",
+                "- Hydration: warm water, herbal teas, broth.",
+                "- Avoid: dairy and heavy foods during active symptoms.",
+            ],
+            "hi": [
+                "🩺 **सर्दी/खांसी समर्थन (आयुष-अनुकूल, गैर-आपातकालीन):**",
+                "- विश्राम: नींद को प्राथमिकता दें और ठंड के संपर्क से बचें।",
+                "- जलयोजन: गर्म पानी, हर्बल चाय, शोरबा।",
+                "- बचें: सक्रिय लक्षणों के दौरान दूध और भारी खाद्य पदार्थ।",
+            ],
+            "mr": [
+                "🩺 **सर्दी/खांसी समर्थन (आयुष-अनुकूल, गैर-आपातकालीन):**",
+                "- विश्राम: झोपेला प्राधान्य द्या आणि थंडीचा संपर्क टाळा।",
+                "- जलयोजन: गरम पाणी, औषधी चहा, शोरबा।",
+                "- बचा: सक्रिय लक्षणांच्या काळात दूध आणि जड खाद्य।",
+            ],
+        },
+    }
+    
+    if condition and condition != "general" and condition in advice_map:
+        localized_advice = advice_map[condition].get(lang)
+        if localized_advice:
+            return "\n".join(localized_advice)
+    
+    return ""
 
 
 def build_plant_knowledge_snippet(plant: Dict) -> str:

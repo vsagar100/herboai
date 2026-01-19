@@ -47,6 +47,32 @@ export const translations = {
       description: "Ask questions about medicinal plants and traditional remedies",
       placeholder: "Ask about herbal remedies, plant benefits, or traditional medicine...",
       send: "Send",
+      suggestions: {
+        quickConditionsTitle: "Quick Conditions",
+        preparationsTitle: "Preparations",
+        plantsTitle: "Plants",
+        tips:
+          "Tips: Try mixing English/Hindi/Marathi. Example: “मधुमेह साठी काय घ्यावं?”",
+        conditions: [
+          "I have diabetes. What helps?",
+          "I have common cold. What helps?",
+          "I have arthritis. What helps?",
+          "I have hypertension. What helps?",
+          "I have indigestion. What helps?",
+        ],
+        preparations: [
+          "How to prepare Gudmar decoction?",
+          "Turmeric milk preparation",
+          "Triphala powder dosage",
+          "Neem oil usage for skin",
+        ],
+        plants: [
+          "Tell me about Ashwagandha",
+          "Benefits of Turmeric",
+          "Uses of Amla",
+          "Neem for acne",
+        ],
+      },
       sampleQuestions: [
         "What are natural remedies for joint pain?",
         "Tell me about turmeric benefits",
@@ -159,6 +185,32 @@ export const translations = {
       description: "औषधीय पौधों और पारंपरिक उपचार के बारे में प्रश्न पूछें",
       placeholder: "जड़ी-बूटी उपचार, पौधों के फायदे, या पारंपरिक चिकित्सा के बारे में पूछें...",
       send: "भेजें",
+      suggestions: {
+        quickConditionsTitle: "त्वरित समस्याएँ",
+        preparationsTitle: "तैयारी",
+        plantsTitle: "पौधे",
+        tips:
+          "टिप्स: English/Hindi/Marathi मिलाकर पूछें। उदाहरण: “मधुमेह साठी काय घ्यावं?”",
+        conditions: [
+          "मुझे मधुमेह है। क्या मदद करेगा?",
+          "मुझे सर्दी-जुकाम है। क्या मदद करेगा?",
+          "मुझे गठिया है। क्या मदद करेगा?",
+          "मुझे उच्च रक्तचाप है। क्या मदद करेगा?",
+          "मुझे अपच है। क्या मदद करेगा?",
+        ],
+        preparations: [
+          "गुड़मार का काढ़ा कैसे बनाएं?",
+          "हल्दी दूध बनाने की विधि",
+          "त्रिफला पाउडर की खुराक",
+          "त्वचा के लिए नीम तेल का उपयोग",
+        ],
+        plants: [
+          "अश्वगंधा के बारे में बताएं",
+          "हल्दी के फायदे",
+          "आंवला के उपयोग",
+          "मुंहासों के लिए नीम",
+        ],
+      },
       sampleQuestions: [
         "जोड़ों के दर्द के लिए प्राकृतिक उपचार क्या हैं?",
         "हल्दी के फायदे बताएं",
@@ -271,6 +323,32 @@ export const translations = {
       description: "औषधी वनस्पती आणि पारंपरिक उपचारांबद्दल प्रश्न विचारा",
       placeholder: "हर्बल उपचार, वनस्पतींचे फायदे किंवा पारंपरिक औषधांबद्दल विचारा...",
       send: "पाठवा",
+      suggestions: {
+        quickConditionsTitle: "त्वरित समस्या",
+        preparationsTitle: "बनवण्याची पद्धत",
+        plantsTitle: "वनस्पती",
+        tips:
+          "टीप: English/Hindi/Marathi मिसळून विचारू शकता. उदाहरण: “मधुमेह साठी काय घ्यावं?”",
+        conditions: [
+          "मला मधुमेह आहे. काय उपयोगी पडेल?",
+          "मला सर्दी-खोकला आहे. काय उपयोगी पडेल?",
+          "मला संधिवात आहे. काय उपयोगी पडेल?",
+          "मला उच्च रक्तदाब आहे. काय उपयोगी पडेल?",
+          "मला अपचन आहे. काय उपयोगी पडेल?",
+        ],
+        preparations: [
+          "गुडमारचा काढा कसा बनवायचा?",
+          "हळदीचे दूध बनवण्याची पद्धत",
+          "त्रिफळा चूर्ण मात्रा",
+          "त्वचेसाठी निंब तेलाचा उपयोग",
+        ],
+        plants: [
+          "अश्वगंधाबद्दल सांगा",
+          "हळदीचे फायदे",
+          "आवळ्याचे उपयोग",
+          "मुरुमांसाठी निंब",
+        ],
+      },
       sampleQuestions: [
         "सांध्यांच्या दुखण्यासाठी नैसर्गिक उपचार काय आहेत?",
         "हळदीचे फायदे सांगा",

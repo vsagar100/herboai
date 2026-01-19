@@ -10,4 +10,5 @@ backend/database/sqlite3.exe
 backend/models/*
 *.pyc
 LETTER.*
+*.md
 backend/wheels

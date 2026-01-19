@@ -7,11 +7,14 @@ from __future__ import annotations
 
 import copy
 import os
+import logging
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 import torch
 from services.indic_trans2 import IndicTranslator
+
+log = logging.getLogger("indic_translation")
 
 # Map short codes used across the app to IndicTrans2 tags
 LANG_CODE_MAP = {
@@ -278,37 +281,56 @@ class IndicTranslationService:
             items = list(sentences)
             single = False
 
-        processed = [model.preprocess_text(s, src_tag, tgt_tag) for s in items]
-        inputs = model.tokenizer(
-            processed,
-            truncation=True,
-            padding="longest",
-            return_tensors="pt",
-            max_length=256,
-        ).to(model.device)
-
-        tgt_id = model.tokenizer.convert_tokens_to_ids(tgt_tag)
-        if tgt_id is None and hasattr(model.tokenizer, "lang_code_to_id"):
-            tgt_id = model.tokenizer.lang_code_to_id.get(tgt_tag)
-        if tgt_id is None:
-            raise ValueError(f"Unknown target tag: {tgt_tag}")
-
-        with torch.no_grad():
-            generated = model.model.generate(
-                **inputs,
-                forced_bos_token_id=tgt_id,
-                min_length=0,
+        try:
+            processed = [model.preprocess_text(s, src_tag, tgt_tag) for s in items]
+            inputs = model.tokenizer(
+                processed,
+                truncation=True,
+                padding="longest",
+                return_tensors="pt",
                 max_length=256,
-                num_beams=1,
-                num_return_sequences=1,
-                use_cache=True,
-            )
+            ).to(model.device)
 
-        decoded = model.tokenizer.batch_decode(
-            generated, skip_special_tokens=True, clean_up_tokenization_spaces=True
-        )
-        cleaned = [model.postprocess_text(t) for t in decoded]
-        return cleaned[0] if single else cleaned
+            tgt_id = model.tokenizer.convert_tokens_to_ids(tgt_tag)
+            if tgt_id is None and hasattr(model.tokenizer, "lang_code_to_id"):
+                tgt_id = model.tokenizer.lang_code_to_id.get(tgt_tag)
+            if tgt_id is None:
+                raise ValueError(f"Unknown target tag: {tgt_tag}")
+
+            with torch.no_grad():
+                generated = model.model.generate(
+                    **inputs,
+                    forced_bos_token_id=tgt_id,
+                    min_length=0,
+                    max_length=256,
+                    num_beams=1,
+                    num_return_sequences=1,
+                    use_cache=True,
+                )
+
+            decoded = model.tokenizer.batch_decode(
+                generated, skip_special_tokens=True, clean_up_tokenization_spaces=True
+            )
+            cleaned = [model.postprocess_text(t) for t in decoded]
+            return cleaned[0] if single else cleaned
+        
+        except (AttributeError, RuntimeError, IndexError) as e:
+            # Known translation model errors (past_key_values NoneType, tensor shape errors, etc.)
+            # Log with context for debugging
+            log.warning(
+                f"[Translation Fallback] {type(e).__name__} in IndicTrans2 model "
+                f"({src_tag}->{tgt_tag}): {str(e)[:150]}. "
+                f"Using original text as fallback."
+            )
+            return items[0] if single else items
+        except Exception as e:
+            # Unexpected errors - log but still fallback
+            log.error(
+                f"[Translation Error] Unexpected {type(e).__name__} in IndicTrans2 "
+                f"({src_tag}->{tgt_tag}): {str(e)[:150]}. Using original text.",
+                exc_info=True
+            )
+            return items[0] if single else items
 
 
 _SERVICE: Optional[IndicTranslationService] = None

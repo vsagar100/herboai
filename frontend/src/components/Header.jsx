@@ -32,11 +32,17 @@ export default function Header() {
   const location = useLocation();
 
   const t = translations[state.language] || translations.en;
-  const languages = [
+  const languagesLegacy = [
     { code: "en", native: "English" },
     { code: "hi", native: "हिंदी" },
     { code: "mr", native: "मराठी" },
   ];
+
+  const languages = languagesLegacy.map((lang) => {
+    if (lang.code === "hi") return { ...lang, native: "Hindi" };
+    if (lang.code === "mr") return { ...lang, native: "Marathi" };
+    return { ...lang, native: "English" };
+  });
 
   const probeSession = async () => {
     const token = localStorage.getItem("herboai_token");
@@ -138,6 +144,18 @@ export default function Header() {
               </Link>
             )}
 
+            {/* When logged in as admin, show a Dashboard link for easy navigation */}
+            {!checking && isAdmin && location.pathname !== "/admin" && (
+              <Link
+                to="/admin"
+                className="hidden sm:inline-flex items-center gap-2 border-2 border-white/60 text-white px-4 py-2 rounded-lg hover:bg-white/10"
+                title={t?.nav?.admin || "Dashboard"}
+              >
+                <Shield className="w-4 h-4" />
+                {t?.nav?.admin || "Dashboard"}
+              </Link>
+            )}
+
             {/* Language selector */}
             <div className="relative">
               <button
@@ -163,7 +181,14 @@ export default function Header() {
                     {languages.map((l) => (
                       <button
                         key={l.code}
-                        onClick={() => { s.setLanguage(l.code); setOpenLang(false); }}
+                        onClick={() => { 
+                          s.setLanguage(l.code); 
+                          setOpenLang(false); 
+                          // Also send event to ChatInterface to sync translit
+                          window.dispatchEvent(new CustomEvent("language:changed", { 
+                            detail: { language: l.code } 
+                          }));
+                        }}
                         className={`w-full text-left px-3 py-2 rounded-md text-sm ${
                           state.language === l.code ? "bg-green-50 text-green-700" : "hover:bg-gray-100 text-gray-800"
                         }`}

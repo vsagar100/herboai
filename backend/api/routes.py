@@ -298,6 +298,14 @@ def query():
                 "preparations": structured.get("preparations", [])[:3]
             }
         
+        elif "condition" in structured and "preparations" in structured:
+            # Remedy lookup case (newer format from handle_chat)
+            response["structured"] = {
+                "condition": structured["condition"],
+                "plants": structured.get("plants", [])[:5],  # Limit for frontend
+                "preparations": structured.get("preparations", [])[:6]  # Return up to 6 preps
+            }
+        
         elif "plant" in structured:
             # Plant info / plant preparation case
             response_struct = {
