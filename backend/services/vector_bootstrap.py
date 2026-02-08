@@ -6,7 +6,7 @@ from typing import Dict, List, Sequence
 from sentence_transformers import SentenceTransformer
 from sqlite_vec import serialize_float32
 
-from db import get_db
+from db import get_db_standalone
 
 _MODEL = None
 _MODEL_NAME = os.getenv("SENTENCE_MODEL_NAME", "all-MiniLM-L6-v2")
@@ -213,7 +213,8 @@ def ensure_vector_indexes(force_full: bool = False) -> Dict[str, int]:
       - diseases/plants/preparations: total rows currently present in vec tables
       - diseases_rebuilt/plants_rebuilt/preparations_rebuilt: rows rebuilt this run
     """
-    db = get_db()
+    print("[VectorIndex] Starting vector index check...")
+    db = get_db_standalone()
     try:
         rebuilt = {"diseases": 0, "plants": 0, "preparations": 0}
 

@@ -32,7 +32,7 @@ def rebuild_fts_for_entity(entity_type: str, entity_id: int) -> None:
         db.execute(f"DELETE FROM {fts} WHERE entity_id=?", (entity_id,))
         if content.strip():
             db.execute(f"INSERT INTO {fts}(entity_id, content) VALUES(?,?)", (entity_id, content))
-    db.commit()
+    # Commit removed - caller controls transaction
 
 def rebuild_vec_for_entity(entity_type: str, entity_id: int) -> None:
     db = get_db()
@@ -62,4 +62,4 @@ def rebuild_vec_for_entity(entity_type: str, entity_id: int) -> None:
             f"INSERT INTO {vt}({id_col}, name, embedding) VALUES(?,?,?)",
             (entity_id, name, vec),
         )
-    db.commit()
+    # Commit removed - caller controls transaction

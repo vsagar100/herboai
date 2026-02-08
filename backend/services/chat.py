@@ -11,7 +11,7 @@ from sentence_transformers import SentenceTransformer
 from sqlite_vec import serialize_float32
 import numpy as np
 
-from db import get_db, fetch_preparations_for_disease, resolve_disease_id
+from db import get_db, fetch_preparations_for_disease, resolve_disease_id, rank_preparations_by_severity
 from api.nlu_optimized import detect_language, classify_intent, extract_entities
 from services.async_translator import get_async_translator
 from services.indic_translation_service import get_indic_translation_service
@@ -197,6 +197,7 @@ def is_preparation_like_query(user_text: str, text_for_intent: str | None) -> bo
     prep_keywords_local = [
         "काढा", "काढ़ा", "काढ़ा", "काढा कसा", "काढा कसा बनवायचा",
         "काढा कैसे", "काढ़ा कैसे", "कसे बनवायचे", "कसा बनवायचा",
+        "बनव",  # generic verb stem 'to make' in Marathi/Hindi
     ]
 
     for kw in prep_keywords_en:
@@ -813,11 +814,12 @@ def _get_session(session_id: Optional[str]) -> Dict[str, Any]:
             "id": session_id,
             "stage": "new",        # new | collecting | ready
             "slots": {},
+            "previous_slots": {},  # Track previous turn's slots to show only NEW info
             "last_q": None,
             "lang": None,
             "returned_prep_ids": set(),  # Track preparation IDs already returned
             "returned_plant_ids": set(),  # Track plant IDs already returned
-            "asked_questions": set(),     # Track which follow-up questions were asked
+            "asked_slots": set(),         # Track which SLOTS were asked (not question text)
             "updated_at": _now(),
         }
         _SESSIONS[session_id] = sess
@@ -825,7 +827,13 @@ def _get_session(session_id: Optional[str]) -> Dict[str, Any]:
     return sess
 
 def _classify_condition(text: str) -> str:
-    """Classify health condition from text (supports English, Hindi, Marathi)."""
+    """Classify health condition from text (supports English, Hindi, Marathi).
+    
+    Returns a condition code that determines:
+      - Which followup slots to ask
+      - How to map to disease names for DB lookup
+      - Whether to treat as explicit-disease (skip slot-gating) or symptom-narrative
+    """
     t = (text or "").lower()
     
     # Diabetes keywords: English + Hindi (मधुमेह) + Marathi (मधुमेह/साखर)
@@ -836,39 +844,122 @@ def _classify_condition(text: str) -> str:
     if any(x in t for x in ("hypertension", "bp", "blood pressure", "उच्च रक्तदाब", "दाब", "रक्तदाब", "उच्च दाब")):
         return "hypertension"
     
-    # Cold/Cough keywords: English + Hindi (जुकाम/खोकला) + Marathi (सर्दी/खोकी)
-    # CRITICAL: Use Marathi script for Marathi words!
+    # Cold/Cough keywords
     if any(x in t for x in (
-        # English
         "cold", "cough", "sore throat", "runny nose", "congestion",
-        # Hindi (Devanagari script)
         "जुकाम", "खोकला", "कफ", "नाक बहना", "गले में खराश",
-        # Marathi (Devanagari script - DIFFERENT WORDS)
         "सर्दी", "खोकी", "घसरघस", "नाक वाहणे", "गळ्याला खरास"
     )):
         return "cold_cough"
     
-    # Digestion/Acidity keywords: English + Hindi (अम्लपित्त/गॅस) + Marathi (अपचन/गॅस)
+    # Digestion/Acidity keywords
     if any(x in t for x in (
-        # English
         "acidity", "gas", "indigestion", "heartburn", "bloating",
-        # Hindi
         "अम्लपित्त", "गॅस", "अपचन", "पेट में जलन",
-        # Marathi
-        "अपचन", "गॅस", "अम्लपित्त", "पोटात जळजळ"
+        "पोटात जळजळ", "बद्धकोष्ठ", "कब्ज", "constipation",
+        "diarrhea", "अतिसार", "दस्त", "loose motion"
     )):
         return "digestion"
     
-    # Arthritis/Joint pain keywords: English + Hindi (संधिवात) + Marathi (सांधेदुखी)
+    # Arthritis/Joint pain keywords
     if any(x in t for x in (
-        # English
         "arthritis", "joint pain", "joint", "knee pain", "back pain",
-        # Hindi
         "संधिवात", "गुडघा दुखी", "कमर दर्द", "जोड़ों का दर्द",
-        # Marathi
-        "सांधेदुखी", "गुडघ्याचा दुखी", "पीठीचा दुखी", "संधिरोग"
+        "सांधेदुखी", "गुडघ्याचा दुखी", "पीठीचा दुखी", "संधिरोग",
+        "जोडदुखी"
     )):
         return "arthritis"
+
+    # ── Skin conditions (NEW — includes acne/pimples/मुरुम) ──
+    if any(x in t for x in (
+        "acne", "pimple", "पिंपल", "मुरुम", "मुंहासे", "फुंसी",
+        "eczema", "एक्जिमा", "psoriasis", "सोरायसिस",
+        "skin", "त्वचा", "rash", "खरुज", "खाज", "खुजली",
+        "itching", "fungal", "बुरशी", "vitiligo", "पांढरे डाग",
+        "dark spot", "काळे डाग", "pigmentation",
+        "ringworm", "दाद", "urticaria", "अंगावर उठणे",
+        "dermatitis", "त्वचारोग", "boil", "गळू"
+    )):
+        return "skin"
+    
+    # ── Hair conditions (NEW) ──
+    if any(x in t for x in (
+        "hair fall", "hair loss", "केस गळ", "बाल झड", "alopecia",
+        "baldness", "टक्कल", "dandruff", "कोंडा", "रूसी",
+        "grey hair", "पांढरे केस", "सफेद बाल"
+    )):
+        return "hair"
+    
+    # ── Respiratory (beyond cold/cough) ──
+    if any(x in t for x in (
+        "asthma", "दमा", "श्वास", "breathing", "bronchitis",
+        "sinusitis", "सायनस", "nasal", "नाक बंद"
+    )):
+        return "respiratory"
+    
+    # ── Fever ──
+    if any(x in t for x in (
+        "fever", "ज्वर", "बुखार", "ताप", "flu", "इन्फ्लूएंजा"
+    )):
+        return "fever"
+    
+    # ── Mental health / stress ──
+    if any(x in t for x in (
+        "anxiety", "चिंता", "stress", "तणाव", "depression", "नैराश्य",
+        "insomnia", "अनिद्रा", "झोप न येणे", "नींद न आना",
+        "sleep", "memory", "स्मरणशक्ती", "याददाश्त"
+    )):
+        return "mental_health"
+    
+    # ── Urinary / kidney ──
+    if any(x in t for x in (
+        "kidney", "किडनी", "मूत्रपिंड", "stone", "पथरी", "खडे",
+        "urine", "लघवी", "पेशाब", "uti"
+    )):
+        return "urinary"
+    
+    # ── Liver ──
+    if any(x in t for x in (
+        "liver", "यकृत", "जिगर", "लिव्हर",
+        "jaundice", "कावीळ", "पीलिया", "fatty liver"
+    )):
+        return "liver"
+    
+    # ── Women's health ──
+    if any(x in t for x in (
+        "periods", "मासिक पाळी", "माहवारी", "menstrual",
+        "pcos", "pcod", "पीसीओएस", "menopause", "रजोनिवृत्ती",
+        "leucorrhea", "श्वेतप्रदर"
+    )):
+        return "womens_health"
+    
+    # ── Pain (generic) ──
+    if any(x in t for x in (
+        "headache", "डोकेदुखी", "सिरदर्द", "migraine", "मायग्रेन",
+        "pain", "दुखी", "दर्द", "वेदना", "सूज", "inflammation"
+    )):
+        return "pain"
+    
+    # ── Metabolic / blood ──
+    if any(x in t for x in (
+        "anemia", "अॅनिमिया", "रक्ताची कमी", "weakness", "अशक्तपणा",
+        "obesity", "लठ्ठपणा", "मोटापा", "weight", "cholesterol",
+        "कोलेस्टेरॉल", "thyroid", "थायरॉइड"
+    )):
+        return "metabolic"
+    
+    # ── Piles / fistula ──
+    if any(x in t for x in (
+        "piles", "मूळव्याध", "बवासीर", "fistula", "भगंदर",
+        "hemorrhoid"
+    )):
+        return "piles"
+    
+    # ── Allergy ──
+    if any(x in t for x in (
+        "allergy", "ऍलर्जी", "अलर्जी", "allergic"
+    )):
+        return "allergy"
     
     # Default to general
     return "general"
@@ -879,6 +970,18 @@ _CONDITION_SLOTS = {
     "cold_cough": ("duration", "trend", "pain_fever_severity", "age_gender", "existing_illness"),
     "digestion": ("duration", "trend", "severity", "age_gender", "existing_illness"),
     "arthritis": ("duration", "trend", "severity", "age_gender", "existing_illness"),
+    "skin": ("duration", "trend", "severity", "age_gender", "existing_illness"),
+    "hair": ("duration", "trend", "age_gender", "existing_illness"),
+    "respiratory": ("duration", "trend", "pain_fever_severity", "age_gender", "existing_illness"),
+    "fever": ("duration", "trend", "pain_fever_severity", "age_gender", "existing_illness"),
+    "mental_health": ("duration", "trend", "age_gender", "existing_illness"),
+    "urinary": ("duration", "trend", "age_gender", "existing_illness"),
+    "liver": ("duration", "trend", "age_gender", "existing_illness"),
+    "womens_health": ("duration", "trend", "age_gender", "existing_illness"),
+    "pain": ("duration", "trend", "severity", "age_gender", "existing_illness"),
+    "metabolic": ("duration", "trend", "age_gender", "existing_illness"),
+    "piles": ("duration", "trend", "severity", "age_gender", "existing_illness"),
+    "allergy": ("duration", "trend", "severity", "age_gender", "existing_illness"),
     "general": ("duration", "trend", "pain_fever_severity", "age_gender", "existing_illness"),
 }
 
@@ -889,6 +992,18 @@ _CONDITION_REQUIRED = {
     "cold_cough": ("duration", "trend", "pain_fever_severity", "age_gender"),
     "digestion": ("duration", "trend", "severity", "age_gender"),
     "arthritis": ("duration", "trend", "severity", "age_gender"),
+    "skin": ("duration",),  # Minimal — don't block remedy for simple queries
+    "hair": ("duration",),
+    "respiratory": ("duration", "trend", "age_gender"),
+    "fever": ("duration", "trend", "pain_fever_severity", "age_gender"),
+    "mental_health": ("duration", "age_gender"),
+    "urinary": ("duration", "age_gender"),
+    "liver": ("duration", "age_gender"),
+    "womens_health": ("duration", "age_gender"),
+    "pain": ("duration", "trend"),
+    "metabolic": ("duration", "age_gender"),
+    "piles": ("duration", "severity"),
+    "allergy": ("duration",),
     "general": ("duration", "trend", "age_gender"),
 }
 
@@ -899,6 +1014,18 @@ _CONDITION_OPTIONAL = {
     "cold_cough": ("existing_illness",),
     "digestion": ("existing_illness",),
     "arthritis": ("existing_illness",),
+    "skin": ("trend", "severity", "age_gender", "existing_illness"),
+    "hair": ("trend", "age_gender", "existing_illness"),
+    "respiratory": ("existing_illness",),
+    "fever": ("existing_illness",),
+    "mental_health": ("trend", "existing_illness"),
+    "urinary": ("trend", "existing_illness"),
+    "liver": ("trend", "existing_illness"),
+    "womens_health": ("trend", "existing_illness"),
+    "pain": ("severity", "age_gender", "existing_illness"),
+    "metabolic": ("trend", "existing_illness"),
+    "piles": ("age_gender", "existing_illness"),
+    "allergy": ("trend", "severity", "age_gender", "existing_illness"),
     "general": ("existing_illness",),
 }
 
@@ -955,42 +1082,51 @@ def _slot_questions(condition: str | None, missing: list[str], lang: str = "en",
     lang = normalize_lang(lang)
     lang_map = qmap.get(lang, qmap["en"])
     
-    # Get asked questions from session to avoid repeating
-    asked = sess.get("asked_questions", set()) if sess else set()
+    # Track filled slots to avoid re-asking
+    filled_slots = sess.get("slots", {}) if sess else {}
     
     questions = []
     for m in missing:
+        # Skip if this slot was already filled (user answered it)
+        if m in filled_slots:
+            continue
+            
         if m in lang_map:
             q = lang_map[m]
-            # Only include if not already asked in this session
-            if q not in asked:
-                questions.append(q)
-                # Track this question as asked
-                if sess:
-                    sess.setdefault("asked_questions", set()).add(q)
+            questions.append(q)
     
     return questions
 
 
 def _extract_slots(text: str) -> Dict[str, str]:
     """
-    Very lightweight slot extraction. Works well for your current UI.
+    Enhanced slot extraction from natural user responses.
+    Works with single answers like "2 months" or complete sentences.
     """
     t = (text or "").strip().lower()
     slots: Dict[str, str] = {}
 
-    # duration: "2 years", "6 months", "10 days"
+    # duration: "2 years", "6 months", "10 days", or just "2 months" as single answer
     m = re.search(r"(\d+)\s*(year|years|yr|yrs|month|months|mo|mos|day|days|d)\b", t)
     if m:
-        slots["duration"] = f"{m.group(1)} {m.group(2)}"
+        num = m.group(1)
+        unit = m.group(2)
+        # Normalize unit
+        if unit.startswith('y'):
+            unit = 'year' if num == '1' else 'years'
+        elif unit.startswith('mo'):
+            unit = 'month' if num == '1' else 'months'
+        elif unit.startswith('d'):
+            unit = 'day' if num == '1' else 'days'
+        slots["duration"] = f"{num} {unit}"
 
     # trend
-    if any(w in t for w in ("better", "improving", "improved")):
-        slots["trend"] = "better"
-    elif any(w in t for w in ("worse", "worsening", "getting worse")):
-        slots["trend"] = "worse"
-    elif "same" in t or "no change" in t:
-        slots["trend"] = "same"
+    if any(w in t for w in ("better", "improving", "improved", "getting better")):
+        slots["trend"] = "improving"
+    elif any(w in t for w in ("worse", "worsening", "getting worse", "deteriorating")):
+        slots["trend"] = "worsening"
+    elif "same" in t or "no change" in t or "stable" in t:
+        slots["trend"] = "stable"
 
     # severity
     if "severe" in t:
@@ -1022,16 +1158,23 @@ def _extract_slots(text: str) -> Dict[str, str]:
         slots["bp_values"] = "provided"
 
 
-    # age + gender (simple patterns)
-    # e.g. "age 35 male", "35M", "female 28"
+    # age + gender (enhanced patterns)
+    # e.g. "age 35 male", "35M", "female 28", "35 years, female", "28 f"
     m = re.search(r"\b(\d{1,3})\s*(m|male|f|female)\b", t)
     if m:
-        slots["age_gender"] = f"{m.group(1)} {m.group(2)}"
+        age = m.group(1)
+        gender = "male" if m.group(2) in ['m', 'male'] else "female"
+        slots["age_gender"] = f"{age} years, {gender}"
     else:
-        m = re.search(r"\b(age\s*)?(\d{1,3})\b", t)
-        if m and any(w in t for w in ("male", "female", "man", "woman", "m", "f")):
-            g = "male" if "male" in t or "man" in t or re.search(r"\b\d+\s*m\b", t) else "female"
-            slots["age_gender"] = f"{m.group(2)} {g}"
+        # Try to extract age and gender separately
+        age_match = re.search(r"\b(\d{1,3})\s*(years?|yrs?)?\b", t)
+        if age_match:
+            age = age_match.group(1)
+            # Look for gender anywhere in text
+            if any(w in t for w in ["male", "man", "boy", " m ", "m,", "m."]):
+                slots["age_gender"] = f"{age} years, male"
+            elif any(w in t for w in ["female", "woman", "girl", " f ", "f,", "f."]):
+                slots["age_gender"] = f"{age} years, female"
 
     # existing illness
     illness_hits = []
@@ -1217,45 +1360,87 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
     sess["lang"] = lang
     sess["last_q"] = user_text
 
-    # English text for intent/NER
+    # English text is still useful for LLM/RAG, but
+    # intent classification and entity extraction should
+    # operate on the original (possibly non-English) text
+    # to give a native-language experience.
     text_en = user_text if lang == "en" else translate_to_en(user_text, lang_hint=lang)
 
     # NLU
     try:
-        intent = classify_intent(text_en)  # e.g. "plant", "preparation", "remedy", "disease", "symptom", ...
+        # Use original text for intent so Hindi/Marathi patterns
+        # in api.nlu_optimized.classify_intent are fully leveraged.
+        intent = classify_intent(user_text)
     except Exception:
         intent = None
     try:
-        entities = extract_entities(text_en) or {}
+        # extract_entities: use English translation when available and valid,
+        # fall back to original text otherwise.
+        translation_ok = (text_en and text_en != user_text and lang != "en")
+        extracted = extract_entities(user_text, text_en, prefer_en=translation_ok)
+        if extracted and isinstance(extracted, tuple) and len(extracted) == 2:
+            entities = {
+                "plants": extracted[0] or [],
+                "diseases": extracted[1] or []
+            }
+        else:
+            entities = {"plants": [], "diseases": []}
     except Exception:
-        entities = {}
+        entities = {"plants": [], "diseases": []}
 
     # -----------------------------
-    # Severity (keep your safety)
+    # ⚡ CRITICAL: Route informational intents BEFORE severity check
+    # Plant info and preparation queries should NOT trigger emergency warnings
     # -----------------------------
-    sev = assess_severity(user_text)
-    if isinstance(sev, str):
-        sev = {"band": sev, "red_flags": []}
+    informational_intents = ("plant", "plant_info", "herb", "plant_identity", 
+                             "preparation", "preparation_info", "recipe")
+    is_informational = intent in informational_intents
+    
+    # -----------------------------
+    # Severity (only for symptom/disease queries)
+    # -----------------------------
+    sev = {"band": "normal", "red_flags": []}  # Default for informational queries
+    
+    if not is_informational:
+        # Only assess severity for symptom/disease queries
+        sev = assess_severity(user_text)
+        if isinstance(sev, str):
+            sev = {"band": sev, "red_flags": []}
 
-    if sev.get("band") == "emergency":
-        msg_en = (
-            "⚠️ This may be serious.\n\n"
-            "Please seek immediate medical care. Herbal remedies are not advised for emergency symptoms."
-        )
-        msg = translate_from_en(msg_en, lang) if lang != "en" else msg_en
-        return {
-            "answer": msg,
-            "severity": sev,
-            "followups": [],
-            "provisional": [],
-            "session_id": sess["id"],
-        }
+        if sev.get("band") == "emergency":
+            msg_en = (
+                "⚠️ This may be serious.\n\n"
+                "Please seek immediate medical care. Herbal remedies are not advised for emergency symptoms."
+            )
+            msg = translate_from_en(msg_en, lang) if lang != "en" else msg_en
+            return {
+                "answer": msg,
+                "severity": sev,
+                "followups": [],
+                "provisional": [],
+                "session_id": sess["id"],
+            }
 
     # -----------------------------
     # Local helpers (keep changes contained inside handle_chat)
     # -----------------------------
     def _extract_plant_term(en_text: str, ent: dict) -> str | None:
-        # Try NLU entities first
+        # First check if we have extracted plant entities
+        if isinstance(ent, dict) and "plants" in ent:
+            plants = ent.get("plants", [])
+            if plants and len(plants) > 0:
+                # Return the name of the first plant found
+                first_plant = plants[0]
+                if isinstance(first_plant, dict):
+                    # Try to get name in different formats
+                    return (first_plant.get("common_name_en") or 
+                            first_plant.get("name_en") or
+                            first_plant.get("botanical_name") or
+                            first_plant.get("name", "")).lower()
+                elif isinstance(first_plant, str):
+                    return first_plant.lower()
+        
+        # Legacy: Try NLU entities (backward compatibility)
         if isinstance(ent, dict):
             for k in ("plant", "plant_name", "herb", "ingredient", "entity"):
                 v = ent.get(k)
@@ -1271,13 +1456,32 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
             "amla", "triphala", "giloy", "brahmi", "shankhpushpi", "brahmi",
             "ginger", "garlic", "black cumin", "fenugreek", "cinnamon",
             "cardamom", "clove", "pepper", "cumin", "coriander",
-            "gotu kola", "bhumyamalaki", "bhringraj", "bhumi", "kama"
+            "gotu kola", "bhumyamalaki", "bhringraj", "bhumi", "kama",
+            "gudmar", "gymnema", "meshashringi"
         ]
         
         text_lower = (en_text or "").lower()
         for plant in common_plants:
             if plant in text_lower:
                 return plant
+        
+        # Enhanced fallback: extract meaningful token (skip preparation types)
+        # Words to skip when looking for plant names
+        prep_type_words = {
+            "decoction", "powder", "churna", "oil", "taila", "ghrita",
+            "kwatha", "kadha", "kashaya", "syrup", "capsule", "tablet",
+            "juice", "extract", "tincture", "infusion", "tea",
+            "preparation", "remedy", "medicine", "formulation",
+            "how", "make", "prepare", "recipe", "method"
+        }
+        
+        # Tokenize and find plant name (skip prep types)
+        tokens = re.findall(r'\b[a-z]{3,}\b', text_lower)
+        for token in reversed(tokens):  # Start from end (plant names often at end)
+            if token not in prep_type_words and len(token) >= 3:
+                # Check if it looks like a plant name (not a common word)
+                if token not in {"the", "for", "with", "from", "about", "what", "tell"}:
+                    return token
         
         # Last resort: last meaningful token (works for "tulsi preparation")
         toks = _simple_tokens(en_text)
@@ -1327,7 +1531,54 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
         return None
 
     def _extract_disease_term(en_text: str, ent: dict) -> str:
-        # Prefer explicit entity
+        # ✅ PRIORITY 1: keyword-based condition classifier on original text.
+        # This handles Marathi/Hindi disease keywords reliably
+        # (e.g. "रक्तदाब" → hypertension) and avoids false positives
+        # from fuzzy synonym search on Devanagari tokens.
+        cond = _classify_condition(user_text)
+
+        # PRIORITY 1b: Use extracted disease entities from NLU FIRST
+        # because they have the exact disease ID and name from DB.
+        # This is more accurate than the coarse condition classifier.
+        if isinstance(ent, dict) and "diseases" in ent:
+            diseases = ent.get("diseases", [])
+            if diseases and len(diseases) > 0:
+                first_disease = diseases[0]
+                if isinstance(first_disease, dict):
+                    name = (first_disease.get("name_en") or 
+                            first_disease.get("name") or 
+                            first_disease.get("disease_name", ""))
+                    if name:
+                        print(f"[DISEASE_TERM] entity extraction → {name}")
+                        return name
+
+        if cond and cond != "general":
+            # Map condition code → English disease name for DB lookup
+            _COND_TO_NAME = {
+                "diabetes": "diabetes",
+                "hypertension": "hypertension",
+                "cold_cough": "common cold",
+                "digestion": "indigestion",
+                "arthritis": "arthritis",
+                "skin": "acne / pimples",
+                "hair": "hair fall",
+                "respiratory": "asthma",
+                "fever": "fever",
+                "mental_health": "anxiety",
+                "urinary": "kidney stones",
+                "liver": "jaundice",
+                "womens_health": "menstrual disorders",
+                "pain": "headache",
+                "metabolic": "obesity",
+                "piles": "piles",
+                "allergy": "allergy",
+            }
+            mapped = _COND_TO_NAME.get(cond)
+            if mapped:
+                print(f"[DISEASE_TERM] condition classifier → {cond} → {mapped}")
+                return mapped
+        
+        # PRIORITY 3: Legacy explicit entity keys (backward compatibility)
         if isinstance(ent, dict):
             for k in ("disease", "condition", "problem", "illness"):
                 v = ent.get(k)
@@ -1335,8 +1586,22 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
                     return v.strip()
                 if isinstance(v, list) and v and isinstance(v[0], str) and v[0].strip():
                     return v[0].strip()
-        # Fallback: use the condition classifier
-        return _classify_condition(user_text)
+        
+        # PRIORITY 4: try extracting from English translation text
+        if en_text and en_text != user_text:
+            # Simple keyword scan on translated text
+            t = en_text.lower()
+            for disease_kw in ["diabetes", "hypertension", "blood pressure", "cold",
+                               "cough", "arthritis", "joint pain", "indigestion",
+                               "acidity", "asthma", "jaundice", "fever", "obesity",
+                               "anemia", "piles", "diarrhea", "skin disease",
+                               "kidney stone", "thyroid", "cholesterol"]:
+                if disease_kw in t:
+                    print(f"[DISEASE_TERM] text_en keyword → {disease_kw}")
+                    return disease_kw
+
+        # Fallback: return condition even if "general"
+        return cond
 
     # -----------------------------
     # ✅ 1) PREPARATION / RECIPE / "HOW TO MAKE" intent short-circuit
@@ -1485,15 +1750,185 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
         sess.setdefault("slots", {}).update(new_slots)
         sess["stage"] = "collecting"
     slots = sess.get("slots", {})
+    
+    # CRITICAL: Detect if this is a followup answer (short response filling a slot)
+    # If the user just answered a question, treat it as followup conversation
+    is_followup_answer = (
+        new_slots and  # User provided slot info
+        len(text_en.split()) <= 5 and  # Short response (not a new query)
+        sess.get("stage") == "collecting"  # Already in conversation
+    )
+
+    # ─────────────────────────────────────────────────────────────────────
+    # ✅ NEW SHORT-CIRCUIT: Both plant AND disease identified
+    # When user says "मुरुमांसाठी निंब" (neem for acne), we KNOW
+    # the exact plant + disease. Skip symptom slots entirely and
+    # provide the remedy immediately.
+    # ─────────────────────────────────────────────────────────────────────
+    has_plant_entity = entities and entities.get("plants") and len(entities["plants"]) > 0
+    has_disease_entity = entities and entities.get("diseases") and len(entities["diseases"]) > 0
+    
+    if has_plant_entity and has_disease_entity and intent in ("remedy_lookup", "remedy", "none"):
+        plant_ent = entities["plants"][0]
+        disease_ent = entities["diseases"][0]
+        
+        plant_id = plant_ent.get("id")
+        disease_id_direct = disease_ent.get("id")
+        
+        print(f"[CHAT SHORTCIRCUIT] Plant+Disease detected: plant_id={plant_id}, disease_id={disease_id_direct}")
+        
+        if plant_id and disease_id_direct:
+            try:
+                db = get_db()
+                plant = _fetch_plant_full(int(plant_id)) or {}
+                
+                # Fetch ALL preparations for this disease (generous limit)
+                all_preps = fetch_preparations_for_disease(db, int(disease_id_direct), limit=15)
+                
+                # Separate plant-specific preps (move to front) from others
+                plant_preps = [p for p in all_preps if p.get("plant_id") == int(plant_id)]
+                other_preps = [p for p in all_preps if p.get("plant_id") != int(plant_id)]
+                
+                # Combine: user's plant first, then other herbs for the disease
+                combined_preps = plant_preps + other_preps
+                
+                # If no preps at all, try plant-specific preparations
+                if not combined_preps:
+                    combined_preps = _preparations_for_plant(int(plant_id), k=6)
+                
+                # Apply severity-based intelligence ranking
+                severity_band = sev.get("band", "normal") if isinstance(sev, dict) else "normal"
+                ranked_preps = rank_preparations_by_severity(
+                    combined_preps, severity_band=severity_band, limit=8
+                )
+                
+                # Collect unique plants from all preps for display
+                all_plants = [plant] if plant else []
+                seen_pids = {int(plant_id)} if plant_id else set()
+                for pr in ranked_preps:
+                    pid = pr.get("plant_id")
+                    if pid and int(pid) not in seen_pids:
+                        seen_pids.add(int(pid))
+                        all_plants.append({
+                            "id": int(pid),
+                            "common_name_en": pr.get("common_name_en"),
+                            "common_name_hi": pr.get("common_name_hi"),
+                            "common_name_mr": pr.get("common_name_mr"),
+                            "botanical_name": pr.get("botanical_name"),
+                        })
+                
+                if ranked_preps or plant:
+                    # Build structured remedy answer with severity-ranked preps
+                    answer = build_remedy_answer(
+                        disease=disease_ent,
+                        preparations=ranked_preps,
+                        plants=all_plants,
+                        lang=lang,
+                        severity_band=severity_band,
+                    )
+                    
+                    print(f"[CHAT SHORTCIRCUIT] Returning {len(ranked_preps)} preps ({len(all_plants)} herbs) for {disease_ent.get('name_en')} + {plant.get('common_name_en')}")
+                    
+                    return {
+                        "answer": answer,
+                        "severity": sev,
+                        "detected_language": lang or "en",
+                        "followups": [],
+                        "provisional": ranked_preps,
+                        "structured": {
+                            "condition": condition,
+                            "plant": plant,
+                            "plants": all_plants,
+                            "disease": disease_ent,
+                            "preparations": ranked_preps,
+                        },
+                        "session_id": sess["id"],
+                    }
+            except Exception as e:
+                print(f"[CHAT SHORTCIRCUIT] Error: {e}")
+                import traceback
+                traceback.print_exc()
+    
+    # ─────────────────────────────────────────────────────────────────────
+    # ✅ NEW SHORT-CIRCUIT: Disease entity identified (no specific plant)
+    # When the NLU found a disease entity, use it directly for remedy
+    # lookup instead of relying on _classify_condition → CONDITION_TO_DISEASE
+    # mapping which may not cover all diseases.
+    # ─────────────────────────────────────────────────────────────────────
+    if has_disease_entity and intent in ("remedy_lookup", "remedy", "none") and not has_plant_entity:
+        disease_ent = entities["diseases"][0]
+        disease_id_direct = disease_ent.get("id")
+        
+        if disease_id_direct:
+            try:
+                db = get_db()
+                all_preps = fetch_preparations_for_disease(db, int(disease_id_direct), limit=15)
+                
+                if all_preps:
+                    # Apply severity-based intelligence ranking
+                    severity_band = sev.get("band", "normal") if isinstance(sev, dict) else "normal"
+                    ranked_preps = rank_preparations_by_severity(
+                        all_preps, severity_band=severity_band, limit=8
+                    )
+                    
+                    print(f"[CHAT DISEASE_DIRECT] Found {len(all_preps)} preps, ranked {len(ranked_preps)} for disease_id={disease_id_direct} (severity={severity_band})")
+                    
+                    # Extract unique plants from ranked preps
+                    plants_from_preps = []
+                    seen_pids = set()
+                    for pr in ranked_preps:
+                        pid = pr.get("plant_id")
+                        if pid and int(pid) not in seen_pids:
+                            seen_pids.add(int(pid))
+                            plants_from_preps.append({
+                                "id": int(pid),
+                                "common_name_en": pr.get("common_name_en"),
+                                "common_name_hi": pr.get("common_name_hi"),
+                                "common_name_mr": pr.get("common_name_mr"),
+                                "botanical_name": pr.get("botanical_name"),
+                            })
+                    
+                    answer = build_remedy_answer(
+                        disease=disease_ent,
+                        preparations=ranked_preps,
+                        plants=plants_from_preps,
+                        lang=lang,
+                        severity_band=severity_band,
+                    )
+                    
+                    print(f"[CHAT DISEASE_DIRECT] Returning {len(ranked_preps)} preps ({len(plants_from_preps)} herbs) for {disease_ent.get('name_en')}")
+                    
+                    return {
+                        "answer": answer,
+                        "severity": sev,
+                        "detected_language": lang or "en",
+                        "followups": [],
+                        "provisional": ranked_preps,
+                        "structured": {
+                            "condition": condition,
+                            "disease": disease_ent,
+                            "plants": plants_from_preps,
+                            "preparations": ranked_preps,
+                        },
+                        "session_id": sess["id"],
+                    }
+            except Exception as e:
+                print(f"[CHAT DISEASE_DIRECT] Error: {e}")
+                import traceback
+                traceback.print_exc()
 
     # Decide whether we should be strict with followups (symptom narrative) or not (explicit disease/remedy)
-    explicit_disease_or_remedy = intent in ("disease", "remedy", "treatment", "condition") or (
-        condition != "general" and len(text_en.split()) <= 8
+    # IMPROVED: Also treat "remedy_lookup" intent as explicit (covers "मुरुमांसाठी निंब" type queries)
+    # Also: if NLU found disease entities, treat as explicit even if condition is "general"
+    explicit_disease_or_remedy = (
+        intent in ("disease", "remedy", "treatment", "condition", "remedy_lookup") or
+        (condition != "general" and not is_followup_answer) or
+        (has_disease_entity and not is_followup_answer)
     )
-    symptom_like = intent in ("symptom", "complaint", "triage") or (not explicit_disease_or_remedy)
+    symptom_like = intent in ("symptom", "complaint", "triage") or (not explicit_disease_or_remedy) or is_followup_answer
 
     # Debug: Log decision point
-    print(f"[CHAT] intent={intent}, condition={condition}, symptom_like={symptom_like}, explicit={explicit_disease_or_remedy}")
+    print(f"[CHAT] intent={intent}, condition={condition}, symptom_like={symptom_like}, explicit={explicit_disease_or_remedy}, is_followup={is_followup_answer}")
 
     # -----------------------------
     # Provisional retrieval (DB-first schema-correct)
@@ -1505,6 +1940,18 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
         "hypertension": "hypertension",
         "digestion": "indigestion",
         "arthritis": "arthritis",
+        "skin": "acne / pimples",
+        "hair": "hair fall",
+        "respiratory": "asthma",
+        "fever": "fever",
+        "mental_health": "anxiety",
+        "urinary": "kidney stones",
+        "liver": "jaundice",
+        "womens_health": "menstrual disorders",
+        "pain": "headache",
+        "metabolic": "obesity",
+        "piles": "piles",
+        "allergy": "allergy",
         "general": None,
     }
     # -----------------------------
@@ -1565,6 +2012,75 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
                 provisional = ranked[:3]
             except Exception:
                 provisional = []
+                
+        # ⚡ INTELLIGENT FALLBACK: LLM-generated remedy when DB + vector search fail
+        # This makes the system truly "intelligent" - it can reason about remedies
+        # even when explicit database mappings don't exist
+        if not provisional and disease_id:
+            try:
+                print(f"[CHAT LLM FALLBACK] No DB/vector results, trying LLM generation")
+                
+                # Extract plant from entities if available
+                plant_id = None
+                plant_name = None
+                plant_info = None
+                
+                if entities and "plants" in entities and entities["plants"]:
+                    first_plant = entities["plants"][0]
+                    if isinstance(first_plant, dict):
+                        plant_id = first_plant.get("id")
+                        plant_name = first_plant.get("common_name_en") or first_plant.get("name_en")
+                        plant_info = first_plant
+                
+                # Get disease info
+                disease_row = db.execute(
+                    "SELECT * FROM diseases WHERE id = ?", (disease_id,)
+                ).fetchone()
+                disease_info = dict(disease_row) if disease_row else {}
+                disease_name = disease_info.get("name_en", disease_term)
+                
+                # Generate LLM-based remedy
+                from services.llm_gateway import generate_plant_remedy, generate_general_plant_remedy
+                
+                llm_response = None
+                if plant_name and plant_id:
+                    # Specific plant + disease combination
+                    print(f"[LLM] Generating remedy: {plant_name} for {disease_name}")
+                    llm_response = generate_plant_remedy(plant_name, plant_info, disease_name, disease_info)
+                elif plant_name:
+                    # General plant usage (no specific disease)
+                    print(f"[LLM] Generating general remedy for: {plant_name}")
+                    llm_response = generate_general_plant_remedy(plant_name, plant_info)
+                
+                if llm_response:
+                    # Translate LLM output to user's language if needed
+                    if lang != "en":
+                        try:
+                            llm_translated = translate_from_en(llm_response, lang)
+                            if llm_translated and llm_translated != llm_response:
+                                print(f"[LLM] Translated response to {lang}")
+                                llm_response = llm_translated
+                        except Exception as te:
+                            print(f"[LLM] Translation to {lang} failed: {te}")
+
+                    # Create a pseudo-preparation object for the response builder
+                    provisional = [{
+                        "id": 999999,  # Special ID for LLM-generated content
+                        "name_en": f"{plant_name or 'Herbal'} Remedy for {disease_name}",
+                        "form_type": "generated",
+                        "preparation_steps": llm_response,
+                        "source": "llm_generated",
+                        "localized_name": f"{plant_name or 'Herbal'} Remedy for {disease_name}"
+                    }]
+                    print(f"[LLM] Generated remedy successfully")
+                else:
+                    print(f"[LLM] Failed to generate remedy")
+                    
+            except Exception as e:
+                print(f"[CHAT LLM FALLBACK] Error: {type(e).__name__}: {str(e)[:200]}")
+                import traceback
+                traceback.print_exc()
+                
     except Exception as e:
         print(f"[CHAT] ERROR in provisional retrieval: {type(e).__name__}: {str(e)[:200]}")
         import traceback
@@ -1583,23 +2099,43 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
     req_missing = _missing_required(sess)
     opt_missing = _missing_optional(sess)
 
+    print(f"[CHAT] query: ", user_text)
     # Symptom narrative: ask REQUIRED, but still show remedies (hybrid response)
     if symptom_like and req_missing:
+        
         print(f"[CHAT HYBRID] symptom_like=True, req_missing={req_missing}, provisional={len(provisional)}")
+        print(f"[CHAT SLOTS] filled={slots}, asked_slots={sess.get('asked_slots', set())}")
+        
         followups = _slot_questions(condition, req_missing, lang=lang, sess=sess)
-        if not followups:
-            if lang == "en":
-                followups = ["Since when (days/months/years)?", "Age and gender?", "Is it getting better or worse?"]
-            elif lang == "hi":
-                followups = ["यह कितने दिन/महीने/साल से है?", "उम्र और लिंग?", "क्या यह बेहतर हो रहा है या बदतर?"]
-            elif lang == "mr":
-                followups = ["हे कितने दिवस/महीने/वर्षांपूर्वी आहे?", "वय आणि लिंग?", "हे बरेच चांगले होत आहे किंवा वाईट?"]
-
+        
+        # Build clean acknowledgment of newly filled slots
         noted = ""
         if slots:
-            noted = "✅ Noted: " + "; ".join([f"{k}={v}" for k, v in slots.items()]) + "\n\n"
+            # Only show NEW slots filled in this turn
+            prev_slots = sess.get("previous_slots", {})
+            new_slots = {k: v for k, v in slots.items() if k not in prev_slots or prev_slots[k] != v}
+            
+            if new_slots:
+                # Clean, user-friendly acknowledgment
+                slot_labels = {
+                    "duration": "Duration" if lang == "en" else "अवधि" if lang == "hi" else "कालावधी",
+                    "age_gender": "Age/Gender" if lang == "en" else "उम्र/लिंग" if lang == "hi" else "वय/लिंग",
+                    "trend": "Progress" if lang == "en" else "प्रगति" if lang == "hi" else "प्रगती",
+                    "existing_illness": "Existing conditions" if lang == "en" else "मौजूदा स्थितियां" if lang == "hi" else "विद्यमान स्थिती",
+                }
+                
+                ack_items = []
+                for k, v in new_slots.items():
+                    label = slot_labels.get(k, k.replace('_', ' ').title())
+                    ack_items.append(f"{label}: {v}")
+                
+                noted_text = "Noted" if lang == "en" else "नोट किया" if lang == "hi" else "नोंदवले"
+                noted = f"✅ {noted_text}: " + "; ".join(ack_items) + "\n\n"
+            
+            # Update previous slots tracker
+            sess["previous_slots"] = slots.copy()
 
-        print(f"[RESPONSE_BUILDER HYBRID] Calling with provisional={len(provisional)}, lang={lang}")
+        print(f"[RESPONSE_BUILDER HYBRID] Calling with provisional={len(provisional)}, lang={lang}, followups={len(followups)}")
         response = build_hybrid_response(
             severity=sev.get("band", "low"),
             followups=followups,

@@ -317,7 +317,7 @@ function TagPicker({ value, onChange }) {
 function ConfirmModal({ open, title="Confirm", message, onCancel, onConfirm }) {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onCancel}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onCancel} aria-modal="true" role="dialog">
       <div onClick={e=>e.stopPropagation()} className="w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-100">
         <div className="border-b px-5 py-4">
           <h3 className="text-lg font-semibold">{title}</h3>
@@ -337,6 +337,14 @@ function PlantFormModal({ open, initial, onClose, onSaved }) {
   const [saving, setSaving] = useState(false);
   const plantImagesRef = useRef(null);
   const [tagArr, setTagArr] = useState([]);
+
+  // Prevent background scroll when the modal is open
+  useEffect(() => {
+    if (!open) return;
+    const original = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = original; };
+  }, [open]);
 
   // Initialize form when modal opens or initial changes
   useEffect(() => {
@@ -427,7 +435,7 @@ function PlantFormModal({ open, initial, onClose, onSaved }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div onClick={e => e.stopPropagation()} className="w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-100">
+      <div onClick={e => e.stopPropagation()} className="w-full max-w-5xl h-[90vh] max-h-[90vh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-100">
         <div className="flex items-center justify-between border-b px-5 py-4">
           <h3 className="text-lg font-semibold">{form.id ? "Edit Plant" : "Add Plant"}</h3>
           <button className="rounded-full p-2 hover:bg-slate-100" onClick={onClose} aria-label="Close">✕</button>
@@ -617,7 +625,7 @@ function PlantFormModal({ open, initial, onClose, onSaved }) {
               />
           </div>
 
-          <div className="flex justify-end gap-2 border-t px-5 py-4">
+          <div className="flex justify-end gap-2 border-t px-5 py-4 bg-white sticky bottom-0">
             <OutlineButton type="button" onClick={onClose}>Cancel</OutlineButton>
             <Button type="submit" disabled={saving}>
               {saving ? "Saving…" : "Save Plant"}

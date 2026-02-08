@@ -1,64 +1,43 @@
 #!/usr/bin/env python3
-"""
-Test Marathi query pipeline to identify translation issues.
-"""
-import sys
-sys.path.insert(0, "/data/backend" if __import__("os").path.exists("/data/backend") else ".")
+"""Quick test: Marathi query pipeline for मुरुमांसाठी निंब"""
+import sys, os, json
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from flask import Flask
-from run import create_app
-
-# Create Flask context
+from init import create_app
 app = create_app()
 
-from services.chat import handle_chat
-import json
-
-print("=" * 80)
-print("MARATHI QUERY TEST")
-print("=" * 80)
-
-# Wrap in Flask context
 with app.app_context():
+    from services.chat import handle_chat
 
-    # Test 1: Marathi plant query
-    query_mr_plant = "अश्वगंधाबद्दल माहिती द्या"  # Tell me about Ashwagandha
-    print(f"\n[TEST 1] Marathi Plant Query")
-    print(f"Query: {query_mr_plant}")
-    print("-" * 80)
-    result = handle_chat(query_mr_plant, session_id="test_mr_1", lang="mr")
-    print(f"Language Detected: {result.get('lang', 'NOT SET')}")
-    print(f"Answer Length: {len(result['answer'])} characters")
-    print(f"Answer Preview:\n{result['answer'][:500]}...")
+    query = "\u092E\u0941\u0930\u0941\u092E\u093E\u0902\u0938\u093E\u0920\u0940 \u0928\u093F\u0902\u092C"
+    print(f"\n{'='*60}")
+    print(f"QUERY: {query}")
+    print(f"{'='*60}\n")
 
-    # Test 2: Marathi disease query
-    query_mr_disease = "मला सर्दी आहे"  # I have a cold
-    print(f"\n[TEST 2] Marathi Disease Query")
-    print(f"Query: {query_mr_disease}")
-    print("-" * 80)
-    result = handle_chat(query_mr_disease, session_id="test_mr_2", lang="mr")
-    print(f"Language Detected: {result.get('lang', 'NOT SET')}")
-    print(f"Answer Length: {len(result['answer'])} characters")
-    print(f"Provisional Preps: {len(result.get('provisional', []))}")
-    print(f"Answer Preview:\n{result['answer'][:600]}...")
+    try:
+        result = handle_chat(query, session_id="test_marathi_001", lang="mr")
 
-    # Test 3: Compare English vs Marathi same query
-    query_en = "I have a cold"
-    query_mr = "मला सर्दी आहे"
-    print(f"\n[TEST 3] English vs Marathi - Same Query")
-    print("-" * 80)
-    result_en = handle_chat(query_en, session_id="test_en_cold")
-    result_mr = handle_chat(query_mr, session_id="test_mr_cold", lang="mr")
-    print(f"English Response Length: {len(result_en['answer'])} chars")
-    print(f"Marathi Response Length: {len(result_mr['answer'])} chars")
-    print(f"Preps Found (English): {len(result_en.get('provisional', []))}")
-    print(f"Preps Found (Marathi): {len(result_mr.get('provisional', []))}")
+        print(f"ANSWER:\n{result.get('answer', 'NO ANSWER')}\n")
+        print(f"SEVERITY: {result.get('severity')}")
+        print(f"FOLLOWUPS: {result.get('followups', [])}")
 
-    # Check if sections are missing in Marathi
-    sections = ["preparation", "dosage", "timing", "assessment", "क्षमता", "औषधप्रमाण", "वेळ", "मूल्यांकन"]
-    print(f"\nEnglish - Has 'Assessment': {'Assessment' in result_en['answer']}")
-    print(f"Marathi - Has 'Assessment': {'Assessment' in result_mr['answer']}")
-    print(f"Marathi - Has Marathi 'Assessment': {any(s in result_mr['answer'] for s in sections)}")
+        structured = result.get("structured", {})
+        if structured:
+            disease = structured.get("disease", {})
+            plant = structured.get("plant", {})
+            preps = structured.get("preparations", [])
+            print(f"\nDISEASE: {disease.get('name_en', 'N/A')} (id={disease.get('id', 'N/A')})")
+            print(f"PLANT: {plant.get('common_name_en', 'N/A')} (id={plant.get('id', 'N/A')})")
+            print(f"PREPARATIONS ({len(preps)}):")
+            for p in preps[:3]:
+                print(f"  - {p.get('name_en', '?')}: {(p.get('preparation_steps','') or '')[:100]}")
+
+        print(f"\nFULL RESULT KEYS: {list(result.keys())}")
+
+    except Exception as e:
+        import traceback
+        print(f"ERROR: {e}")
+        traceback.print_exc()
 
     # Show full English response
     print(f"\n[FULL RESPONSE] English (I have a cold):")

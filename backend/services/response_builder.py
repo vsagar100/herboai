@@ -29,7 +29,11 @@ LABELS = {
         "typical_symptoms": "Typical symptoms",
         "root_causes": "Root causes noted in Ayurveda",
         "helpful_herbs": "Helpful herbs",
-        "preparations": "Common preparations",
+        "preparations": "Recommended preparations",
+        "high_efficacy": "Highly effective",
+        "mid_efficacy": "Moderately effective",
+        "low_efficacy": "Supportive",
+        "efficacy_label": "Efficacy",
         "prevention": "Prevention & lifestyle tips",
         "steps": "How to prepare",
         "dosage": "Typical dosage",
@@ -51,7 +55,11 @@ LABELS = {
         "typical_symptoms": "विशिष्ट लक्षण",
         "root_causes": "आयुर्वेद में नोट किए गए मूल कारण",
         "helpful_herbs": "सहायक जड़ी बूटियां",
-        "preparations": "सामान्य तैयारियां",
+        "preparations": "अनुशंसित तैयारियां",
+        "high_efficacy": "अत्यधिक प्रभावी",
+        "mid_efficacy": "मध्यम प्रभावी",
+        "low_efficacy": "सहायक",
+        "efficacy_label": "प्रभावकारिता",
         "prevention": "रोकथाम और जीवनशैली सुझाव",
         "steps": "तैयार करने के लिए कैसे",
         "dosage": "विशिष्ट खुराक",
@@ -73,7 +81,11 @@ LABELS = {
         "typical_symptoms": "विशिष्ट लक्षणे",
         "root_causes": "आयुर्वेदात नोंदविलेल्या मूळ कारणे",
         "helpful_herbs": "मदतीस औषधी वनस्पती",
-        "preparations": "सामान्य तयारी",
+        "preparations": "शिफारस केलेल्या तयारी",
+        "high_efficacy": "अत्यंत प्रभावी",
+        "mid_efficacy": "मध्यम प्रभावी",
+        "low_efficacy": "सहायक",
+        "efficacy_label": "परिणामकारकता",
         "prevention": "प्रतिबंध आणि जीवनशैली सुचना",
         "steps": "कसे तयार करायचे",
         "dosage": "विशिष्ट औषधप्रमाण",
@@ -196,26 +208,42 @@ def build_plant_answer(plant: Dict, lang: str = "en") -> str:
     return "\n\n".join(parts)
 
 
+def _efficacy_stars(level: int) -> str:
+    """Return star rating string for efficacy level (1-5)."""
+    level = max(1, min(5, level))
+    return "★" * level + "☆" * (5 - level)
+
+
+def _efficacy_badge(tier: str, lang: str) -> str:
+    """Return localized efficacy badge for a relevance tier."""
+    tier_key = {"high": "high_efficacy", "mid": "mid_efficacy", "low": "low_efficacy"}
+    key = tier_key.get(tier, "mid_efficacy")
+    return _get_label(key, lang)
+
+
 def build_remedy_answer(
     disease: Dict,
-    plants: Sequence[Dict],
-    preparations: Sequence[Dict],
+    plants: Sequence[Dict] = (),
+    preparations: Sequence[Dict] = (),
     lang: str = "en",
+    severity_band: str = "normal",
 ) -> str:
     """
-    Build disease remedy response in target language.
-    
+    Build disease remedy response in target language with severity-aware
+    efficacy indicators.
+
     Args:
         disease: Disease data dict (should include id for entity_i18n lookup)
         plants: List of plant dicts
-        preparations: List of preparation dicts
+        preparations: List of preparation dicts (may include _relevance_tier, efficacy_level)
         lang: Target language ('en', 'hi', 'mr')
-    
+        severity_band: 'normal', 'low', 'moderate', 'high', 'emergency'
+
     Returns:
         Formatted remedy response in target language
     """
     lang = normalize_lang(lang)
-    
+
     # Get localized disease name and description
     disease_id = disease.get("id")
     if disease_id:
@@ -230,7 +258,7 @@ def build_remedy_answer(
         symptoms_text = disease.get("symptoms", "")
         causes_text = disease.get("causes", "")
         prevention_text = disease.get("prevention_tips", "")
-    
+
     parts = [f"## {name} {_get_label('overview', lang)}"]
 
     if description:
@@ -238,13 +266,14 @@ def build_remedy_answer(
 
     if symptoms_text:
         parts.append(f"**{_get_label('typical_symptoms', lang)}:** {_format_list(symptoms_text)}")
-    
+
     if causes_text:
         parts.append(f"**{_get_label('root_causes', lang)}:** {_format_list(causes_text)}")
 
+    # ── Helpful herbs (up to 6) ──
     if plants:
         lines = []
-        for plant in plants[:5]:
+        for plant in plants[:6]:
             plant_id = plant.get("id")
             if plant_id:
                 pname = get_localized_field("plant", plant_id, "name", lang) or plant.get("common_name_en", "")
@@ -252,23 +281,24 @@ def build_remedy_answer(
             else:
                 pname = plant.get("common_name_en") or plant.get("common_name", "")
                 actions_text = plant.get("therapeutic_actions", "")
-            
+
             bname = plant.get("botanical_name") or ""
             actions = _format_list(actions_text)
-            
+
             line = f"- **{pname}**"
             if bname:
                 line += f" _{bname}_"
             if actions:
                 line += f": {actions}"
             lines.append(line)
-        
+
         if lines:
             parts.append(f"**{_get_label('helpful_herbs', lang)}:**\n" + "\n".join(lines))
 
+    # ── Preparations (severity-ranked, up to 8) ──
     if preparations:
         lines = []
-        for prep in preparations[:3]:
+        for prep in preparations[:8]:
             prep_id = prep.get("id")
             if prep_id:
                 pname = get_localized_field("preparation", prep_id, "name", lang) or prep.get("name_en", "")
@@ -276,13 +306,46 @@ def build_remedy_answer(
             else:
                 pname = prep.get("name_en") or prep.get("name", "")
                 steps_text = prep.get("preparation_steps", "")
-            
+
             form = prep.get("form_type") or prep.get("category", "")
-            
+
+            # Efficacy indicator
+            eff_level = prep.get("efficacy_level", 0)
+            if isinstance(eff_level, str):
+                try:
+                    eff_level = int(eff_level)
+                except ValueError:
+                    eff_level = 0
+            eff_level = int(eff_level)
+
+            tier = prep.get("_relevance_tier", "")
+            badge = _efficacy_badge(tier, lang) if tier else ""
+            stars = _efficacy_stars(eff_level) if eff_level > 0 else ""
+
+            # Herb name for this prep
+            herb_name = ""
+            herb_plant_id = prep.get("plant_id")
+            if herb_plant_id:
+                herb_name = (
+                    get_localized_field("plant", int(herb_plant_id), "name", lang)
+                    or prep.get("common_name_en", "")
+                )
+
             line = f"- **{pname}**"
             if form:
                 line += f" ({form})"
-            
+            if stars:
+                line += f" {stars}"
+            if badge:
+                line += f" — _{badge}_"
+
+            # Herb attribution
+            if herb_name:
+                line += f"\n  🌿 {herb_name}"
+                bname = prep.get("botanical_name", "")
+                if bname:
+                    line += f" ({bname})"
+
             # Parse steps if JSON
             if isinstance(steps_text, str):
                 try:
@@ -291,19 +354,33 @@ def build_remedy_answer(
                         steps_text = "; ".join(steps_parsed[:2])
                 except Exception:
                     pass
-            
+
             if steps_text:
-                step_summary = str(steps_text)[:100] + ("..." if len(str(steps_text)) > 100 else "")
-                line += f": {step_summary}"
-            
+                step_summary = str(steps_text)[:120] + ("..." if len(str(steps_text)) > 120 else "")
+                line += f"\n  {step_summary}"
+
+            # Dosage if available
+            dosage = prep.get("dosage_json", "")
+            if dosage:
+                if isinstance(dosage, str):
+                    try:
+                        dosage = json.loads(dosage)
+                    except Exception:
+                        pass
+                if isinstance(dosage, dict):
+                    adult_dose = dosage.get("adult", "")
+                    if adult_dose:
+                        dose_label = _get_label("dosage", lang)
+                        line += f"\n  💊 {dose_label}: {str(adult_dose)[:80]}"
+
             lines.append(line)
-        
+
         if lines:
             parts.append(f"**{_get_label('preparations', lang)}:**\n" + "\n".join(lines))
 
     if prevention_text:
         parts.append(f"**{_get_label('prevention', lang)}:** {_format_list(prevention_text)}")
-    
+
     parts.append(_get_label('medical_disclaimer', lang))
 
     return "\n\n".join(parts)
@@ -414,9 +491,41 @@ def _fmt_dosage(dosage, lang: str = "en") -> str:
 
 
 def _prep_card(p: dict, lang: str = "en") -> str:
-    """Format a preparation card in target language."""
+    """
+    Format a preparation card in target language.
+    Enhanced to handle both DB preparations and LLM-generated remedies.
+    """
     lang = normalize_lang(lang)
     
+    # Check if this is an LLM-generated remedy
+    is_llm_generated = p.get("source") == "llm_generated"
+    
+    if is_llm_generated:
+        # For LLM-generated content, the response is already formatted
+        name = p.get("name_en", "Herbal Remedy")
+        content = p.get("preparation_steps", "")
+        
+        lines = []
+        lines.append(f"**{name}**")
+        if content:
+            lines.append(content)
+        
+        # Add note that this is AI-generated
+        ai_note = (
+            "\nℹ️ *This remedy is AI-generated based on traditional Ayurvedic knowledge. "
+            "Please consult a qualified practitioner before use.*"
+            if lang == "en" else
+            "\nℹ️ *यह उपाय पारंपरिक आयुर्वेदिक ज्ञान के आधार पर AI द्वारा उत्पन्न है। "
+            "उपयोग से पहले कृपया योग्य चिकित्सक से परामर्श लें।*"
+            if lang == "hi" else
+            "\nℹ️ *हा उपाय पारंपारिक आयुर्वेदिक ज्ञानावर आधारित AI-निर्मित आहे। "
+            "वापरण्यापूर्वी कृपया पात्र वैद्यांचा सल्ला घ्या.*"
+        )
+        lines.append(ai_note)
+        
+        return "\n".join(lines)
+    
+    # Regular DB preparation handling
     prep_id = p.get("id")
     if prep_id:
         name = get_localized_field("preparation", prep_id, "name", lang) or p.get("name_en") or p.get("name") or p.get("classical_name") or "Herbal preparation"
@@ -467,28 +576,36 @@ def _prep_card(p: dict, lang: str = "en") -> str:
 def build_hybrid_response(severity: str, followups: list[str], provisional: list[dict], lang: str = "en") -> str:
     """
     Used while collecting followups.
-    MUST still give useful prep/remedy output.
+    MUST give remedies FIRST, then ask optional questions.
     """
     lang = normalize_lang(lang)
     lines = []
     
+    # Show remedies FIRST (answer before asking)
+    if provisional:
+        prep_label = _get_label('preparations', lang)
+        lines.append(f"🌿 **{prep_label} (from HerboAI DB):**")
+        # Show up to 5 top preparations so that key, high-efficacy
+        # remedies (e.g. Gudmar-based preparations for diabetes)
+        # are visible in the main answer, not only in the structured
+        # payload.
+        for idx, p in enumerate(provisional[:5], 1):
+            lines.append(f"\n{idx}) " + _prep_card(p, lang))
+        lines.append("")
+    
+    # THEN show severity assessment (non-blocking info)
     severity_label = severity.capitalize() if lang == "en" else (
         severity.capitalize() if lang == "hi" else severity.capitalize()
     )
     lines.append(f"🔍 **Assessment:** {severity_label} severity\n")
 
-    if provisional:
-        prep_label = _get_label('preparations', lang)
-        lines.append(f"🌿 **{prep_label} (from HerboAI DB):**")
-        for idx, p in enumerate(provisional[:3], 1):
-            lines.append(f"\n{idx}) " + _prep_card(p, lang))
-        lines.append("")
-
+    # Finally, ask OPTIONAL clarifying questions (non-blocking)
     if followups:
-        q_label = "A few quick questions" if lang == "en" else (
-            "कुछ त्वरित प्रश्न" if lang == "hi" else "काही द्रुत प्रश्न"
+        q_label = "A few quick questions (to personalize, optional but helpful):" if lang == "en" else (
+            "कुछ त्वरित प्रश्न (वैयक्तिक बनाने के लिए, वैकल्पिक लेकिन उपयोगी):" if lang == "hi" else 
+            "काही द्रुत प्रश्न (वैयक्तिकृत करण्यासाठी, वैकल्पिक परंतु उपयुक्त):"
         )
-        lines.append(f"❓ **{q_label} (to personalize, optional but helpful):**")
+        lines.append(f"❓ **{q_label}**")
         for i, q in enumerate(followups, 1):
             lines.append(f"{i}. {q}")
         lines.append("")

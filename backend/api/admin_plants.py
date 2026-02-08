@@ -27,7 +27,22 @@ def _js(v):
         return None
     if isinstance(v, (list, dict)):
         return json.dumps(v, ensure_ascii=False)
-    return v
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            return None
+        try:
+            # already JSON? keep as-is
+            json.loads(s)
+            return s
+        except Exception:
+            # wrap plain text so sqlite CHECK(json_valid(...)) passes
+            return json.dumps(v, ensure_ascii=False)
+    # fallback: serialize primitives to valid JSON
+    try:
+        return json.dumps(v, ensure_ascii=False)
+    except Exception:
+        return str(v)
 
 def _coerce_payload(data: dict) -> dict:
     """Coerce incoming payload to DB-friendly structure."""
@@ -139,30 +154,35 @@ def serve_file(relpath):
 @admin_plants_bp.post("/plants")
 @jwt_required()
 def admin_create_plant():
-    print("Create plant request received")
+    print("[AdminPlants] Create plant request received")
+    db = None
     try:
         data = request.get_json() or {}
         if not data.get("botanical_name"):
             return jsonify({"error": "botanical_name is required"}), 400
 
         payload = _coerce_payload(data)
+        print(f"[AdminPlants] Payload prepared: {payload.get('botanical_name')}")
+        
         # enforce uniqueness on botanical_name
+        print("[AdminPlants] Getting DB connection...")
         db = get_db()
+        print("[AdminPlants] DB connection acquired")
+        print("[AdminPlants] Checking uniqueness...")
         exists = db.execute("SELECT id FROM plants WHERE lower(botanical_name)=lower(?) OR lower(common_name_en)=lower(?)",
                             (payload["botanical_name"], payload["common_name_en"])).fetchone()
         if exists:
             return jsonify({"error": "botanical_name or common_name_en already exists"}), 409
 
+        print("[AdminPlants] Inserting plant record...")
         cols = ", ".join(payload.keys())
         qs = ", ".join(["?"] * len(payload))
         db.execute(f"INSERT INTO plants ({cols}) VALUES ({qs})", tuple(payload.values()))
-        db.commit()
-
         new_id = db.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
-        row = db.execute("SELECT * FROM plants WHERE id=?", (new_id,)).fetchone()
-
-        # Handle i18n fields and FTS indexing
-        # Extract English fields from the actual database row
+        print(f"[AdminPlants] Plant inserted with ID: {new_id}")
+        
+        # Handle i18n fields and FTS indexing within same transaction
+        print("[AdminPlants] Starting i18n/indexing...")
         admin_save_with_i18n(
             entity_type="plant",
             entity_id=new_id,
@@ -177,11 +197,27 @@ def admin_create_plant():
                 "vipaka": payload.get("vipaka"),
             },
         )
+        
+        # Single commit after all operations
+        print("[AdminPlants] Committing transaction...")
+        db.commit()
+        print("[AdminPlants] Transaction committed successfully")
+        
+        row = db.execute("SELECT * FROM plants WHERE id=?", (new_id,)).fetchone()
 
+        print("[AdminPlants] Plant created successfully")
         return jsonify(_row_to_obj(row)), 201
     except Exception as e:
-        print("Create plant error:", e)
-        return jsonify({"error": "creation failed"}), 500
+        print(f"[AdminPlants] ERROR: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        if db:
+            try:
+                db.rollback()
+                print("[AdminPlants] Transaction rolled back")
+            except Exception as rb_err:
+                print(f"[AdminPlants] Rollback failed: {rb_err}")
+        return jsonify({"error": f"creation failed: {str(e)}"}), 500
 
 @admin_plants_bp.put("/plants/<int:plant_id>") 
 @jwt_required()
@@ -208,7 +244,6 @@ def admin_update_plant(plant_id: int):
     cur = db.execute(f"UPDATE plants SET {sets} WHERE id=?", (*payload.values(), plant_id))
     if cur.rowcount == 0:
         return jsonify({"error": "Not found"}), 404
-    db.commit()
 
     admin_save_with_i18n(
         entity_type="plant",
@@ -224,6 +259,9 @@ def admin_update_plant(plant_id: int):
             "vipaka": payload.get("vipaka"),
         },
     )
+    
+    # Single commit after all operations
+    db.commit()
 
     row = db.execute("SELECT * FROM plants WHERE id=?", (plant_id,)).fetchone()
     return jsonify(_row_to_obj(row))
