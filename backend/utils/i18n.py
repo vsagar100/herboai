@@ -112,6 +112,8 @@ def get_localized_field(entity_type: str, entity_id: int, field: str, lang: str)
             "preparation_steps": "preparation_steps",
             "notes": "notes",
             "dosage_json": "dosage_json",
+            "timing": "timing",
+            "anupana": "anupana",
         },
     }
 

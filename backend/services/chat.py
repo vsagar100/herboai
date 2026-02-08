@@ -37,7 +37,7 @@ from repositories.search_repo import (
     hydrate_preparations,
     rank_preparations,
 )
-from utils.i18n import normalize_lang
+from utils.i18n import normalize_lang, get_localized_field
 
 
 log = logging.getLogger("pipeline")
@@ -482,65 +482,161 @@ def _preparations_for_plant(plant_id: int, k: int = 5) -> List[Dict]:
         preps.append(d)
     return preps
 
-def _build_plant_preparation_answer(plant: Dict[str, Any], preps: List[Dict[str, Any]]) -> str:
-    """Human-readable answer focused on how to prepare this plant's remedies."""
-    name_en = plant.get("common_name_en") or plant.get("botanical_name") or "the plant"
+def _build_plant_preparation_answer(plant: Dict[str, Any], preps: List[Dict[str, Any]], lang: str = "en") -> str:
+    """Build a fully localized preparation answer using entity_i18n data.
+
+    For each field (name, steps, dosage, notes, timing, anupana) the
+    i18n table is queried first.  Only if nothing is found there do we
+    fall back to the English base-table value and – as a last resort –
+    short per-field machine translation (never bulk-translate the whole
+    response).
+    """
+    from services.response_builder import LABELS
+    lang = normalize_lang(lang)
+    L = LABELS.get(lang, LABELS["en"])
+
+    # ── Plant name (localized) ──
+    plant_id = plant.get("id")
+    if plant_id and lang != "en":
+        plant_name = get_localized_field("plant", int(plant_id), "name", lang)
+    else:
+        plant_name = ""
+    if not plant_name:
+        plant_name = plant.get("common_name_en") or plant.get("botanical_name") or "the plant"
     botanical = plant.get("botanical_name") or ""
-    header = f"For **{name_en}**"
-    if botanical:
-        header += f" (_{botanical}_)"
-    header += ", here are the preparations available in the HerboAI knowledge base:\n\n"
 
+    # Header in target language
+    HEADER_TPL = {
+        "en": "For **{name}**{bot}, here are the preparations available in the HerboAI knowledge base:",
+        "hi": "**{name}**{bot} के लिए हर्बोएआई ज्ञान आधार में उपलब्ध तैयारियाँ:",
+        "mr": "**{name}**{bot} साठी हर्बोएआय ज्ञान आधारामध्ये उपलब्ध तयारी:",
+    }
+    bot_str = f" (_{botanical}_)" if botanical else ""
+    header = HEADER_TPL.get(lang, HEADER_TPL["en"]).format(name=plant_name, bot=bot_str)
+
+    NO_PREP_MSG = {
+        "en": "Detailed preparations are not yet stored for this plant in the database. Use only under guidance of a qualified Ayurvedic practitioner.",
+        "hi": "इस वनस्पति की विस्तृत तैयारी अभी डेटाबेस में उपलब्ध नहीं है। कृपया योग्य आयुर्वेदिक चिकित्सक के मार्गदर्शन में ही उपयोग करें।",
+        "mr": "या वनस्पतीची सविस्तर तयारी अद्याप डेटाबेसमध्ये उपलब्ध नाही. कृपया पात्र आयुर्वेदिक तज्ञांच्या मार्गदर्शनाखालीच वापर करा.",
+    }
     if not preps:
-        return (
-            header
-            + "Detailed step-by-step preparations are not yet stored for this plant in the database.\n"
-              "You can still use it only under guidance of a qualified Ayurvedic practitioner."
-        )
+        return header + "\n\n" + NO_PREP_MSG.get(lang, NO_PREP_MSG["en"])
 
-    lines: List[str] = [header]
+    lines: List[str] = [header, ""]
+
     for i, prep in enumerate(preps, start=1):
-        pname = prep.get("name_en") or prep.get("classical_name") or "Unnamed preparation"
+        prep_id = prep.get("id")
+
+        # ── Name ──
+        pname = ""
+        if prep_id and lang != "en":
+            pname = get_localized_field("preparation", int(prep_id), "name", lang)
+        if not pname:
+            pname = prep.get("name_en") or prep.get("classical_name") or "Preparation"
         form = prep.get("form_type") or ""
         lines.append(f"{i}. **{pname}**" + (f" ({form})" if form else ""))
 
-        # Steps
-        steps = prep.get("preparation_steps")
-        if isinstance(steps, list) and steps:
-            lines.append("   • Preparation steps:")
-            for idx, step in enumerate(steps[:8], start=1):
-                if isinstance(step, str):
-                    lines.append(f"     {idx}) {step.strip()}")
+        # ── Preparation Steps ──
+        steps_text = ""
+        if prep_id and lang != "en":
+            steps_text = get_localized_field("preparation", int(prep_id), "preparation_steps", lang)
+        if not steps_text:
+            steps_text = prep.get("preparation_steps", "")
 
-        # Dosage
-        dosage = prep.get("dosage_json")
-        if isinstance(dosage, dict):
-            adult = dosage.get("adult")
-            child = dosage.get("child")
-            if adult or child:
-                lines.append("   • Typical dosage (for general guidance):")
-                if adult:
-                    lines.append(f"     – Adult: {adult}")
-                if child:
-                    lines.append(f"     – Child: {child}")
+        if steps_text:
+            steps_label = L.get("steps", "How to prepare")
+            lines.append(f"   **{steps_label}:**")
+            # Handle both list and string formats
+            if isinstance(steps_text, list):
+                for idx, step in enumerate(steps_text[:8], 1):
+                    if isinstance(step, str):
+                        lines.append(f"     {idx}) {step.strip()}")
+            elif isinstance(steps_text, str):
+                # Try JSON parse (may have been stored as JSON string)
+                try:
+                    parsed = json.loads(steps_text)
+                    if isinstance(parsed, list):
+                        for idx, step in enumerate(parsed[:8], 1):
+                            lines.append(f"     {idx}) {str(step).strip()}")
+                    else:
+                        lines.append(f"     {steps_text.strip()}")
+                except (json.JSONDecodeError, TypeError):
+                    lines.append(f"     {steps_text.strip()}")
 
-        # Timing & Anupana
-        if prep.get("timing"):
-            lines.append(f"   • Timing: {prep['timing']}")
-        if prep.get("anupana"):
-            lines.append(f"   • Anupana: {prep['anupana']}")
+        # ── Dosage ──
+        dosage_text = ""
+        if prep_id and lang != "en":
+            dosage_text = get_localized_field("preparation", int(prep_id), "dosage_json", lang)
+        if not dosage_text:
+            dosage_text = prep.get("dosage_json", "")
 
-        if prep.get("notes"):
-            notes = prep["notes"]
-            if isinstance(notes, str):
-                lines.append(f"   • Notes: {notes.strip()}")
+        if dosage_text:
+            # Parse JSON if needed
+            dosage_obj = dosage_text
+            if isinstance(dosage_obj, str):
+                try:
+                    dosage_obj = json.loads(dosage_obj)
+                except (json.JSONDecodeError, TypeError):
+                    dosage_obj = dosage_text
 
-        lines.append("")  # Blank line between preparations
+            dosage_label = L.get("dosage", "Typical dosage")
+            adult_label = {"en": "Adult", "hi": "वयस्क", "mr": "प्रौढ"}.get(lang, "Adult")
+            child_label = {"en": "Child", "hi": "बच्चे", "mr": "मुलं"}.get(lang, "Child")
 
-    lines.append(
-        "⚠️ This information is for educational purposes only. "
-        "Always confirm dosage and suitability with a qualified Ayurvedic practitioner."
-    )
+            if isinstance(dosage_obj, dict):
+                adult = dosage_obj.get("adult", "")
+                child = dosage_obj.get("child", "")
+                if adult or child:
+                    lines.append(f"   **{dosage_label}:**")
+                    if adult:
+                        lines.append(f"     - {adult_label}: {adult}")
+                    if child:
+                        lines.append(f"     - {child_label}: {child}")
+            elif isinstance(dosage_obj, str) and dosage_obj.strip():
+                lines.append(f"   **{dosage_label}:** {dosage_obj.strip()}")
+
+        # ── Timing ──
+        timing_text = ""
+        if prep_id and lang != "en":
+            timing_text = get_localized_field("preparation", int(prep_id), "timing", lang)
+        if not timing_text:
+            timing_text = (prep.get("timing") or "").strip()
+        if timing_text and lang != "en" and timing_text == (prep.get("timing") or "").strip():
+            # Still English – use static phrase translation (NOT IndicTrans2)
+            from services.response_builder import _translate_ayurvedic_phrase
+            timing_text = _translate_ayurvedic_phrase(timing_text, lang)
+        if timing_text:
+            timing_label = L.get("timing", "Timing")
+            lines.append(f"   **{timing_label}:** {timing_text}")
+
+        # ── Anupana ──
+        anupana_text = ""
+        if prep_id and lang != "en":
+            anupana_text = get_localized_field("preparation", int(prep_id), "anupana", lang)
+        if not anupana_text:
+            anupana_text = (prep.get("anupana") or "").strip()
+        if anupana_text and lang != "en" and anupana_text == (prep.get("anupana") or "").strip():
+            # Still English – use static phrase translation (NOT IndicTrans2)
+            from services.response_builder import _translate_ayurvedic_phrase
+            anupana_text = _translate_ayurvedic_phrase(anupana_text, lang)
+        if anupana_text:
+            anupana_label = L.get("anupana", "Anupana")
+            lines.append(f"   **{anupana_label}:** {anupana_text}")
+
+        # ── Notes ──
+        notes_text = ""
+        if prep_id and lang != "en":
+            notes_text = get_localized_field("preparation", int(prep_id), "notes", lang)
+        if not notes_text:
+            raw_notes = prep.get("notes", "")
+            notes_text = raw_notes if isinstance(raw_notes, str) else ""
+        if notes_text and notes_text.strip():
+            notes_label = {"en": "Notes", "hi": "टिप्पणी", "mr": "टीप"}.get(lang, "Notes")
+            lines.append(f"   **{notes_label}:** {notes_text.strip()}")
+
+        lines.append("")  # blank line between preparations
+
+    lines.append(L.get("medical_disclaimer", LABELS["en"]["medical_disclaimer"]))
     return "\n".join(lines)
 
 def _fetch_knowledge_chunk(chunk_id: int) -> Optional[Dict[str, Any]]:
@@ -1665,8 +1761,7 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
                     if first_plant_id:
                         plant = _fetch_plant_full(int(first_plant_id)) or {}
 
-                    answer_en = _build_plant_preparation_answer(plant or {}, prep_rows)
-                    answer = translate_from_en(answer_en, lang) if lang != "en" else answer_en
+                    answer = _build_plant_preparation_answer(plant or {}, prep_rows, lang=lang)
 
                     print(f"[PREP PATH] Found {len(prep_rows)} preps via direct search")
 
@@ -1701,8 +1796,7 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
         plant = plant or _fetch_plant_full(plant_id) or {}
         preps = _preparations_for_plant(plant_id, k=5)
 
-        answer_en = _build_plant_preparation_answer(plant, preps)
-        answer = translate_from_en(answer_en, lang) if lang != "en" else answer_en
+        answer = _build_plant_preparation_answer(plant, preps, lang=lang)
 
         print(f"[PREP PATH] Returning {len(preps)} preps for plant_id={plant_id} ({plant.get('common_name_en')})")
 

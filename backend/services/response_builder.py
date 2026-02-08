@@ -13,6 +13,220 @@ import json
 from typing import Dict, List, Sequence
 from utils.i18n import get_localized_field, normalize_lang
 
+# ──────────────────────────────────────────────────────────────────────
+# Static translation maps for timing/anupana Ayurvedic phrases
+# (IndicTrans2 garbles these short phrases → use reliable static map)
+# ──────────────────────────────────────────────────────────────────────
+_PHRASE_TRANSLATIONS: dict[str, dict[str, str]] = {
+    "hi": {
+        # ── Timing phrases ──
+        "before meals": "भोजन से पहले",
+        "after meals": "भोजन के बाद",
+        "with meals": "भोजन के साथ",
+        "before food": "भोजन से पहले",
+        "after food": "भोजन के बाद",
+        "with food": "भोजन के साथ",
+        "between meals": "भोजन के बीच",
+        "morning": "सुबह",
+        "evening": "शाम",
+        "night": "रात",
+        "bedtime": "सोते समय",
+        "at bedtime": "सोते समय",
+        "empty stomach": "खाली पेट",
+        "morning empty stomach": "सुबह खाली पेट",
+        "external use only": "केवल बाहरी उपयोग",
+        "external": "बाहरी उपयोग",
+        "throughout day": "दिन भर",
+        "anytime": "कभी भी",
+        "daytime": "दिन में",
+        "with breakfast": "नाश्ते के साथ",
+        "as directed": "निर्देशानुसार",
+        "as advised": "चिकित्सक की सलाह अनुसार",
+        "as prescribed": "निर्देशानुसार",
+        "as directed by practitioner": "चिकित्सक के निर्देशानुसार",
+        "as directed by physician": "चिकित्सक के निर्देशानुसार",
+        "as needed": "आवश्यकतानुसार",
+        "symptomatic use": "लक्षणानुसार",
+        "after dinner": "रात्रि भोजन के बाद",
+        # ── Anupana phrases ──
+        "warm water": "गर्म पानी",
+        "lukewarm water": "गुनगुना पानी",
+        "cold water": "ठंडा पानी",
+        "plain water": "सादा पानी",
+        "water": "पानी",
+        "milk": "दूध",
+        "warm milk": "गर्म दूध",
+        "lukewarm milk": "गुनगुना दूध",
+        "milk base": "दूध आधार",
+        "honey": "शहद",
+        "ghee": "घी",
+        "buttermilk": "छाछ",
+        "jaggery": "गुड़",
+        "rock sugar": "मिश्री",
+        "plain": "सादा",
+        "none": "कोई नहीं",
+        "plain warm": "सादा गुनगुना",
+        "plain lukewarm": "सादा गुनगुना",
+        "diluted with water": "पानी में मिलाकर",
+        "diluted in cool water": "ठंडे पानी में मिलाकर",
+        "with honey or ghee": "शहद या घी के साथ",
+        "with honey": "शहद के साथ",
+        "with ghee": "घी के साथ",
+        "with milk": "दूध के साथ",
+        "with lukewarm water or milk": "गुनगुने पानी या दूध के साथ",
+        "with warm water or milk": "गर्म पानी या दूध के साथ",
+        # ── Common connectors ──
+        "usually": "सामान्यतः",
+        "or": "या",
+        "and": "और",
+        "with": "के साथ",
+        "suitable": "उपयुक्त",
+        "as suitable": "उपयुक्त अनुसार",
+        "if suitable": "यदि उपयुक्त हो",
+        "as part of light diet": "हल्के आहार के साथ",
+        "sprinkled on food": "भोजन पर छिड़ककर",
+        "chewed": "चबाकर",
+        "small amount of": "थोड़ी मात्रा में",
+        "taken as part of": "के साथ लिया जाए",
+        "may be": "हो सकता है",
+        "lightly seasoned": "हल्का मसाला",
+        "as per advice": "सलाह अनुसार",
+        "when lukewarm": "गुनगुना होने पर",
+        "sattvic": "सात्विक",
+        "light diet": "हल्का आहार",
+        "food": "भोजन",
+        "vehicle": "अनुपान",
+        "decoction": "काढ़ा",
+        "as is": "जैसा है",
+        "typically": "सामान्यतः",
+    },
+    "mr": {
+        # ── Timing phrases ──
+        "before meals": "जेवणापूर्वी",
+        "after meals": "जेवणानंतर",
+        "with meals": "जेवणासोबत",
+        "before food": "जेवणापूर्वी",
+        "after food": "जेवणानंतर",
+        "with food": "जेवणासोबत",
+        "between meals": "जेवणांदरम्यान",
+        "morning": "सकाळी",
+        "evening": "संध्याकाळी",
+        "night": "रात्री",
+        "bedtime": "झोपण्यापूर्वी",
+        "at bedtime": "झोपण्यापूर्वी",
+        "empty stomach": "रिकाम्या पोटी",
+        "morning empty stomach": "सकाळी रिकाम्या पोटी",
+        "external use only": "केवळ बाह्य वापर",
+        "external": "बाह्य वापर",
+        "throughout day": "दिवसभर",
+        "anytime": "कधीही",
+        "daytime": "दिवसा",
+        "with breakfast": "न्याहारीसोबत",
+        "as directed": "निर्देशानुसार",
+        "as advised": "वैद्यांच्या सल्ल्यानुसार",
+        "as prescribed": "निर्देशानुसार",
+        "as directed by practitioner": "वैद्यांच्या निर्देशानुसार",
+        "as directed by physician": "वैद्यांच्या निर्देशानुसार",
+        "as needed": "आवश्यकतेनुसार",
+        "symptomatic use": "लक्षणांनुसार",
+        "after dinner": "रात्रीच्या जेवणानंतर",
+        # ── Anupana phrases ──
+        "warm water": "गरम पाणी",
+        "lukewarm water": "कोमट पाणी",
+        "cold water": "थंड पाणी",
+        "plain water": "साधे पाणी",
+        "water": "पाणी",
+        "milk": "दूध",
+        "warm milk": "गरम दूध",
+        "lukewarm milk": "कोमट दूध",
+        "milk base": "दूध आधार",
+        "honey": "मध",
+        "ghee": "तूप",
+        "buttermilk": "ताक",
+        "jaggery": "गूळ",
+        "rock sugar": "खडीसाखर",
+        "plain": "साधे",
+        "none": "काहीही नाही",
+        "plain warm": "साधे कोमट",
+        "plain lukewarm": "साधे कोमट",
+        "diluted with water": "पाण्यात मिसळून",
+        "diluted in cool water": "थंड पाण्यात मिसळून",
+        "with honey or ghee": "मध किंवा तुपासोबत",
+        "with honey": "मधासोबत",
+        "with ghee": "तुपासोबत",
+        "with milk": "दुधासोबत",
+        "with lukewarm water or milk": "कोमट पाणी किंवा दुधासोबत",
+        "with warm water or milk": "गरम पाणी किंवा दुधासोबत",
+        # ── Common connectors ──
+        "usually": "सामान्यतः",
+        "or": "किंवा",
+        "and": "आणि",
+        "with": "सोबत",
+        "suitable": "योग्य",
+        "as suitable": "योग्यतेनुसार",
+        "if suitable": "योग्य असल्यास",
+        "as part of light diet": "हलक्या आहारासोबत",
+        "sprinkled on food": "जेवणावर शिंपडून",
+        "chewed": "चावून",
+        "small amount of": "थोड्या प्रमाणात",
+        "taken as part of": "सोबत घेतलेले",
+        "may be": "असू शकते",
+        "lightly seasoned": "हलके मसालेदार",
+        "as per advice": "सल्ल्यानुसार",
+        "when lukewarm": "कोमट असताना",
+        "sattvic": "सात्विक",
+        "light diet": "हलका आहार",
+        "food": "जेवण",
+        "vehicle": "अनुपान",
+        "decoction": "काढा",
+        "as is": "जसे आहे",
+        "typically": "सामान्यतः",
+    },
+}
+
+
+def _translate_ayurvedic_phrase(text: str, lang: str) -> str:
+    """Translate an Ayurvedic timing/anupana phrase using static map.
+
+    Strategy:
+    1. Clean snake_case / slash-separated → readable English
+    2. Exact match in phrase map → return
+    3. Fragment-based replacement (longest first) → return
+    4. Fallback → cleaned English (NEVER IndicTrans2 garbage)
+    """
+    if not text or lang == "en":
+        return text
+
+    lang = normalize_lang(lang)
+    phrases = _PHRASE_TRANSLATIONS.get(lang)
+    if not phrases:
+        return text
+
+    # Clean snake_case and normalize
+    cleaned = text.strip()
+    cleaned = cleaned.replace("_", " ").replace("/", " / ")
+    # Collapse multiple spaces
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    lowered = cleaned.lower()
+
+    # 1) Exact match
+    if lowered in phrases:
+        return phrases[lowered]
+
+    # 2) Fragment-based replacement (longest phrases first to avoid partial matches)
+    result = lowered
+    sorted_phrases = sorted(phrases.keys(), key=len, reverse=True)
+    for phrase in sorted_phrases:
+        if phrase in result:
+            result = result.replace(phrase, phrases[phrase])
+
+    # If any translation happened, return it
+    if result != lowered:
+        return result
+
+    # 3) Fallback: return cleaned-up English (readable, no garbage)
+    return cleaned
+
 # Labels & text snippets for different languages
 LABELS = {
     "en": {
@@ -529,19 +743,23 @@ def _prep_card(p: dict, lang: str = "en") -> str:
     prep_id = p.get("id")
     if prep_id:
         name = get_localized_field("preparation", prep_id, "name", lang) or p.get("name_en") or p.get("name") or p.get("classical_name") or "Herbal preparation"
-        # Also try to get localized steps, dosage, notes if available
+        # Also try to get localized steps, dosage, notes, timing, anupana if available
         steps_localized = get_localized_field("preparation", prep_id, "preparation_steps", lang)
         dosage_localized = get_localized_field("preparation", prep_id, "dosage_json", lang)
         notes_localized = get_localized_field("preparation", prep_id, "notes", lang)
+        timing_localized = get_localized_field("preparation", prep_id, "timing", lang)
+        anupana_localized = get_localized_field("preparation", prep_id, "anupana", lang)
     else:
         name = p.get("name_en") or p.get("name") or p.get("classical_name") or "Herbal preparation"
         steps_localized = ""
         dosage_localized = ""
         notes_localized = ""
+        timing_localized = ""
+        anupana_localized = ""
     
     form = p.get("form_type") or p.get("category") or ""
-    timing = (p.get("timing") or "").strip()
-    anupana = (p.get("anupana") or "").strip()
+    timing_raw = (p.get("timing") or "").strip()
+    anupana_raw = (p.get("anupana") or "").strip()
     notes = (p.get("notes") or "").strip()
 
     # Use localized versions if available, otherwise use database versions
@@ -550,6 +768,14 @@ def _prep_card(p: dict, lang: str = "en") -> str:
     dosage_val = _try_parse_json_text(dosage_val)
     dosage = _fmt_dosage(dosage_val, lang=lang)
     notes = notes_localized or notes
+    timing = timing_localized or timing_raw
+    anupana = anupana_localized or anupana_raw
+
+    # For timing/anupana still in English for non-English lang, try static phrase translation
+    if timing and lang != "en" and timing == timing_raw and timing_raw:
+        timing = _translate_ayurvedic_phrase(timing, lang)
+    if anupana and lang != "en" and anupana == anupana_raw and anupana_raw:
+        anupana = _translate_ayurvedic_phrase(anupana, lang)
 
     lines = []
     lines.append(f"**{name}**" + (f" ({form})" if form else ""))
