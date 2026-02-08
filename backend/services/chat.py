@@ -1607,86 +1607,117 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
     # ✅ 1) PREPARATION / RECIPE / "HOW TO MAKE" intent short-circuit
     # -----------------------------
     prep_like = is_preparation_like_query(user_text, text_en)
-    if prep_like or intent in ("preparation", "plant_preparation", "recipe", "how_to"):
-        plant_term = _extract_plant_term(text_en, entities)
-        plant_id = _find_plant_id(plant_term)
+    if prep_like or intent in ("preparation", "plant_preparation", "recipe", "how_to", "preparation_info"):
+        # ── Strategy 1: Use NLU-extracted plant entities (full 5-strategy search) ──
+        plant_id = None
+        plant = None
+        if entities and isinstance(entities, dict):
+            ent_plants = entities.get("plants", [])
+            if ent_plants:
+                first_plant = ent_plants[0]
+                if isinstance(first_plant, dict):
+                    # Only use if found via text/DB match (not low-confidence vector)
+                    vec_dist = first_plant.get("_vec_distance")
+                    if vec_dist is None or float(vec_dist) < 0.85:
+                        plant_id = first_plant.get("id")
+                        if plant_id:
+                            plant_id = int(plant_id)
+                            print(f"[PREP PATH] Plant from NLU entities: id={plant_id} name={first_plant.get('common_name_en')}")
 
+        # ── Strategy 2: search_plants_fuzzy on original Marathi/Hindi text ──
         if not plant_id:
-            # Fallback: search for preparation by name (e.g., "Triphala Churna" is not a plant)
-            db = get_db()
-            term_lower = plant_term.lower() if plant_term else ""
-            
-            if term_lower:
-                # Try exact match on preparation name
-                row = db.execute(
-                    "SELECT id, name_en, plant_id FROM preparations WHERE LOWER(name_en) LIKE ? LIMIT 1",
-                    (f"%{term_lower}%",)
-                ).fetchone()
-                
-                if row:
-                    # Found a preparation directly
-                    prep_id = int(row["id"])
-                    prep_name = row["name_en"]
-                    plant_id_from_prep = row["plant_id"] if "plant_id" in row.keys() else None
-                    
-                    # Get prep details
-                    prep_row = db.execute(
-                        "SELECT * FROM preparations WHERE id = ? LIMIT 1",
-                        (prep_id,)
-                    ).fetchone()
-                    
-                    answer_en = f"## {prep_name}\n\n"
-                    if prep_row:
-                        steps = prep_row["preparation_steps"] if "preparation_steps" in prep_row.keys() else ""
-                        dosage = prep_row["dosage_json"] if "dosage_json" in prep_row.keys() else ""
-                        timing = prep_row["timing"] if "timing" in prep_row.keys() else ""
-                        anupana = prep_row["anupana"] if "anupana" in prep_row.keys() else ""
-                        notes = prep_row["notes"] if "notes" in prep_row.keys() else ""
-                        
-                        if steps:
-                            answer_en += f"**How to prepare:**\n{steps}\n\n"
-                        if dosage:
-                            answer_en += f"**Dosage:**\n{dosage}\n\n"
-                        if timing:
-                            answer_en += f"**Timing:** {timing}\n\n"
-                        if anupana:
-                            answer_en += f"**Anupana:** {anupana}\n\n"
-                        if notes:
-                            answer_en += f"**Notes:** {notes}\n\n"
-                    
+            from api.nlu_optimized import search_plants_fuzzy
+            plant_results = search_plants_fuzzy(user_text, limit=1)
+            if plant_results:
+                candidate = plant_results[0]
+                vec_dist = candidate.get("_vec_distance")
+                if vec_dist is None or float(vec_dist) < 0.85:
+                    plant_id = int(candidate.get("id"))
+                    print(f"[PREP PATH] Plant from fuzzy search: id={plant_id} name={candidate.get('common_name_en')}")
+
+        # ── Strategy 3: Legacy _extract_plant_term + _find_plant_id ──
+        if not plant_id:
+            plant_term = _extract_plant_term(text_en, entities)
+            plant_id = _find_plant_id(plant_term)
+            if plant_id:
+                print(f"[PREP PATH] Plant from legacy lookup: id={plant_id} term={plant_term}")
+
+        # ── Strategy 4: Search for preparation directly by name (multilingual) ──
+        if not plant_id:
+            from api.nlu_optimized import search_preparations_fuzzy
+            prep_results = search_preparations_fuzzy(user_text, limit=3)
+            if not prep_results and text_en and text_en != user_text:
+                prep_results = search_preparations_fuzzy(text_en, limit=3)
+
+            if prep_results:
+                # Found preparation(s) — build a rich response
+                db = get_db()
+                prep_rows = []
+                for pr in prep_results:
+                    pr_id = pr.get("id")
+                    full_row = db.execute("SELECT * FROM preparations WHERE id = ?", (pr_id,)).fetchone()
+                    if full_row:
+                        prep_rows.append(dict(full_row))
+
+                if prep_rows:
+                    # Get the plant from the first preparation
+                    first_plant_id = prep_rows[0].get("plant_id")
+                    if first_plant_id:
+                        plant = _fetch_plant_full(int(first_plant_id)) or {}
+
+                    answer_en = _build_plant_preparation_answer(plant or {}, prep_rows)
                     answer = translate_from_en(answer_en, lang) if lang != "en" else answer_en
-                    
+
+                    print(f"[PREP PATH] Found {len(prep_rows)} preps via direct search")
+
                     return {
                         "answer": answer,
                         "severity": sev,
+                        "detected_language": lang or "en",
                         "followups": [],
-                        "provisional": [dict(prep_row)] if prep_row else [],
+                        "provisional": prep_rows,
+                        "structured": {
+                            "intent": "preparation",
+                            "plant": plant or {},
+                            "plants": [plant] if plant else [],
+                            "preparations": prep_rows,
+                        },
                         "session_id": sess["id"],
                     }
-            
+
             # Still no match - ask for plant name
             msg_en = "Please tell me the plant name for the preparation (e.g., Tulsi, Neem, Amla)."
             msg = translate_from_en(msg_en, lang) if lang != "en" else msg_en
             return {
                 "answer": msg,
                 "severity": sev,
+                "detected_language": lang or "en",
                 "followups": [],
                 "provisional": [],
                 "session_id": sess["id"],
             }
 
-        plant = _fetch_plant_full(plant_id) or {}
-        preps = _preparations_for_plant(plant_id, k=5)  # uses ingredient mapping
+        # ── Have plant_id — fetch plant and its preparations ──
+        plant = plant or _fetch_plant_full(plant_id) or {}
+        preps = _preparations_for_plant(plant_id, k=5)
 
         answer_en = _build_plant_preparation_answer(plant, preps)
         answer = translate_from_en(answer_en, lang) if lang != "en" else answer_en
 
+        print(f"[PREP PATH] Returning {len(preps)} preps for plant_id={plant_id} ({plant.get('common_name_en')})")
+
         return {
             "answer": answer,
             "severity": sev,
+            "detected_language": lang or "en",
             "followups": [],
             "provisional": preps,
-            "structured": {"intent": "preparation", "plant": plant, "preparations": preps},
+            "structured": {
+                "intent": "preparation",
+                "plant": plant,
+                "plants": [plant] if plant else [],
+                "preparations": preps,
+            },
             "session_id": sess["id"],
         }
 
@@ -1694,8 +1725,31 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
     # ✅ 2) PLANT INFO intent short-circuit
     # -----------------------------
     if intent in ("plant", "plant_info", "herb", "plant_identity"):
-        plant_term = _extract_plant_term(text_en, entities)
-        plant_id = _find_plant_id(plant_term)
+        # Try NLU entities first (these use the full 5-strategy search)
+        plant_id = None
+        if entities and isinstance(entities, dict):
+            ent_plants = entities.get("plants", [])
+            if ent_plants and isinstance(ent_plants[0], dict):
+                vec_dist = ent_plants[0].get("_vec_distance")
+                if vec_dist is None or float(vec_dist) < 0.85:
+                    plant_id = ent_plants[0].get("id")
+                    if plant_id:
+                        plant_id = int(plant_id)
+
+        # Fallback: search_plants_fuzzy on original text
+        if not plant_id:
+            from api.nlu_optimized import search_plants_fuzzy
+            results = search_plants_fuzzy(user_text, limit=1)
+            if results:
+                candidate = results[0]
+                vec_dist = candidate.get("_vec_distance")
+                if vec_dist is None or float(vec_dist) < 0.85:
+                    plant_id = int(candidate.get("id"))
+
+        # Fallback: legacy extract + find
+        if not plant_id:
+            plant_term = _extract_plant_term(text_en, entities)
+            plant_id = _find_plant_id(plant_term)
 
         if not plant_id:
             msg_en = "Please tell me the plant name (e.g., Tulsi, Neem, Ashwagandha)."

@@ -38,12 +38,16 @@ TRANSLITERATION_MAP = {
     # Plants
     "ashwagandha": "अश्वगंधा", "ashvagandha": "अश्वगंधा",
     "tulsi": "तुलसी", "tulasi": "तुलसी", "basil": "तुलसी",
-    "neem": "नीम", "nim": "नीम",
+    "neem": "नीम", "nim": "नीम", "निंब": "नीम",
     "guduchi": "गुडूची", "giloy": "गिलोय", "gulvel": "गुळवेल",
+    "gudmar": "गुढमार", "गुडमार": "गुढमार", "meshashringi": "गुढमार",
     "amla": "आँवला", "amalaki": "आमलकी", "आवळा": "आँवला",
     "haritaki": "हरीतकी", "harad": "हरड", "hirda": "हिरडा",
-    "turmeric": "हल्दी", "haldi": "हल्दी", "halad": "हळद",
+    "turmeric": "हल्दी", "haldi": "हल्दी", "halad": "हळद", "हळदी": "हळद",
     "ginger": "अदरक", "adrak": "अदरक", "आलं": "अदरक",
+    "brahmi": "ब्राह्मी", "shankhpushpi": "शंखपुष्पी",
+    "shatavari": "शतावरी", "विदारीकंद": "विदारीकंद",
+    "triphala": "त्रिफला", "arjuna": "अर्जुन",
     
     # Diseases
     "diabetes": "मधुमेह", "madhumeha": "मधुमेह", "sugar": "मधुमेह",
@@ -62,7 +66,14 @@ _QUERY_STOPWORDS = {
     "syrup", "capsule", "oil", "taila", "ghrita",
     "for", "of", "the", "a", "an", "is", "what", "tell", "me",
     "dosage", "dose", "remedy", "info", "information", "guide",
-    "about", "benefits", "help"
+    "about", "benefits", "help",
+    # Devanagari preparation / recipe stopwords (not entity-bearing)
+    "काढा", "काढ्या", "चूर्ण", "पावडर", "तेल", "घृत", "वटी",
+    "रस", "अवलेह", "अरिष्ट", "आसव", "क्वाथ",
+    "दूध", "पेय", "पद्धत", "पद्ध",
+    "बनवायचा", "बनवायची", "बनवायचे", "बनवाय",
+    "बनवण्याची", "बनवण्याचे", "बनवण्याचा", "बनवण्य", "बनवण्या",
+    "तयारी", "तयार", "विधी",
 }
 
 # ── Marathi / Hindi postposition & suffix stripping ──
@@ -78,8 +89,10 @@ _INDIC_SUFFIXES = sorted([
     "ावर", "ावरून",
     "ाला", "ाने", "ाचा", "ाची", "ाचे", "ाच्या",
     "ांचा", "ांची", "ांचे", "ांच्या", "ांना",
+    "ीचा", "ीची", "ीचे", "ीच्या",  # e.g. हळदीचे → हळद
     "चा", "ची", "चे", "च्या",
     "ला", "ने", "ना", "त", "ं",
+    "ी",  # e.g. हळदी → हळद (matra-form suffix)
     # Hindi postpositions (के लिए handled at phrase level above)
     "ों", "ें", "ां",
 ], key=len, reverse=True)
@@ -481,7 +494,7 @@ def search_plants_fuzzy(query: str, limit: int = 5) -> List[Dict]:
                     for vr in vec_rows:
                         vid = int(vr["id"]) if "id" in vr.keys() else int(vr[0])
                         dist = float(vr["distance"]) if "distance" in vr.keys() else float(vr[1])
-                        if dist < 1.2 and vid not in seen_ids:  # reasonable similarity
+                        if dist < 0.85 and vid not in seen_ids:  # tight threshold for confidence
                             plant_row = cur.execute("SELECT * FROM plants WHERE id=?", (vid,)).fetchone()
                             if plant_row:
                                 d = dict(plant_row)
@@ -616,7 +629,7 @@ def search_diseases_fuzzy(query: str, limit: int = 5) -> List[Dict]:
                     for vr in vec_rows:
                         vid = int(vr["id"]) if "id" in vr.keys() else int(vr[0])
                         dist = float(vr["distance"]) if "distance" in vr.keys() else float(vr[1])
-                        if dist < 1.2 and vid not in seen_ids:
+                        if dist < 0.85 and vid not in seen_ids:
                             disease_row = cur.execute("SELECT * FROM diseases WHERE id=?", (vid,)).fetchone()
                             if disease_row:
                                 d = dict(disease_row)
@@ -632,6 +645,113 @@ def search_diseases_fuzzy(query: str, limit: int = 5) -> List[Dict]:
     cur.close()
     _nlu_log.debug(f"[NLU] search_diseases_fuzzy({query!r}) → {len(all_results)} results")
     return all_results[:limit]
+
+
+def search_preparations_fuzzy(query: str, limit: int = 5) -> List[Dict]:
+    """
+    Multi-strategy preparation search:
+      1. entity_i18n (multilingual name) — LIKE on name field
+      2. Base-table multilingual columns (name_en, name_hi, name_mr)
+      3. Vector/embedding similarity (semantic search)
+    Handles Devanagari tokens with automatic suffix stripping.
+    Returns preparation rows with plant info joined.
+    """
+    db = get_db()
+    cur = db.cursor()
+
+    tokens = _prioritized_tokens(query)
+    if not tokens:
+        return []
+
+    all_results: List[Dict] = []
+    seen_ids: set = set()
+
+    def _add(row):
+        rid = int(row["id"]) if "id" in row.keys() else int(row[0])
+        if rid not in seen_ids:
+            seen_ids.add(rid)
+            all_results.append(dict(row))
+
+    for token in tokens:
+        if len(all_results) >= limit:
+            break
+        variations = normalize_query_token(token)
+
+        for variant in variations[:5]:
+            if len(all_results) >= limit:
+                break
+
+            # ── 1. entity_i18n (multilingual name lookup) ──
+            try:
+                rows = cur.execute("""
+                    SELECT DISTINCT pr.*
+                    FROM entity_i18n ei
+                    JOIN preparations pr ON pr.id = ei.entity_id
+                    WHERE ei.entity_type = 'preparation'
+                      AND ei.field = 'name'
+                      AND (LOWER(ei.text) LIKE ? OR LOWER(ei.text) LIKE ?)
+                    LIMIT ?
+                """, (f"{variant}%", f"%{variant}%", limit)).fetchall()
+                for r in rows:
+                    _add(r)
+            except Exception as e:
+                _nlu_log.debug(f"[NLU] entity_i18n prep search err: {e}")
+
+            # ── 2. Base-table multilingual columns ──
+            try:
+                rows = cur.execute("""
+                    SELECT * FROM preparations
+                    WHERE LOWER(name_en) LIKE ?
+                       OR LOWER(name_hi) LIKE ?
+                       OR LOWER(name_mr) LIKE ?
+                       OR LOWER(classical_name) LIKE ?
+                    LIMIT ?
+                """, (f"%{variant}%", f"%{variant}%", f"%{variant}%",
+                      f"%{variant}%", limit)).fetchall()
+                for r in rows:
+                    _add(r)
+            except Exception as e:
+                _nlu_log.debug(f"[NLU] preparations base-table search err: {e}")
+
+    # ── 3. Vector / embedding semantic search ──
+    if len(all_results) < limit:
+        try:
+            from services.chat import _embed_384
+            qvec = _embed_384(query)
+            for vtable in ("preparation_vec_mr", "preparation_vec_hi",
+                           "preparation_vec_en", "preparation_vec"):
+                try:
+                    id_col = "preparation_id"
+                    vec_rows = cur.execute(f"""
+                        SELECT {id_col} AS id, distance
+                        FROM {vtable}
+                        WHERE embedding MATCH ?
+                          AND k = ?
+                    """, (qvec, limit * 2)).fetchall()
+                    for vr in vec_rows:
+                        vid = int(vr["id"]) if "id" in vr.keys() else int(vr[0])
+                        dist = float(vr["distance"]) if "distance" in vr.keys() else float(vr[1])
+                        if dist < 0.75 and vid not in seen_ids:  # tight threshold
+                            prep_row = cur.execute(
+                                "SELECT * FROM preparations WHERE id=?", (vid,)
+                            ).fetchone()
+                            if prep_row:
+                                d = dict(prep_row)
+                                d["_vec_distance"] = dist
+                                _add(d)
+                    if all_results:
+                        break
+                except Exception:
+                    continue
+        except Exception as e:
+            _nlu_log.debug(f"[NLU] prep vec search err: {e}")
+
+    cur.close()
+    _nlu_log.debug(
+        f"[NLU] search_preparations_fuzzy({query!r}) → {len(all_results)} results"
+    )
+    return all_results[:limit]
+
 
 def extract_entities(text: str, text_en: str | None = None, prefer_en: bool = False) -> Tuple[List[Dict], List[Dict]]:
     """
@@ -673,5 +793,6 @@ __all__ = [
     'classify_intent', 
     'extract_entities',
     'search_plants_fuzzy',
-    'search_diseases_fuzzy'
+    'search_diseases_fuzzy',
+    'search_preparations_fuzzy',
 ]
