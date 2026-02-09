@@ -4,7 +4,7 @@ import json
 import time
 from utils.pagination import get_pagination, absolute_file_url
 from repositories.plants_repo import (
-    list_plants, get_plant, get_plant_media, get_plant_synonyms, get_plants_for_disease
+    list_plants, get_plant, get_plant_media, get_plant_synonyms, get_plants_for_disease, get_plant_stats
 )
 from repositories.diseases_repo import list_diseases, get_disease
 from repositories.preparations_repo import (
@@ -35,13 +35,22 @@ def _rowdict(row):
 
 @bp.get("/plants")
 def plants():
-    print("Listing plants")
     q = request.args.get("q")
-    print(f"Search plants with q={q}")
+    lang = request.args.get("lang", "en")
+    ayush_system = request.args.get("ayush_system") or None
+    sort = request.args.get("sort") or None
     page, size, offset = get_pagination()
-    data = list_plants(q, size, offset)
-    print(data)
-    return {"page": page, "size": size, "items": data["items"], "count": data["count"]}, 200
+    data = list_plants(q, size, offset, lang=lang, ayush_system=ayush_system, sort=sort)
+    return {
+        "page": page, "size": size,
+        "items": data["items"], "count": data["count"], "total": data["total"]
+    }, 200
+
+
+@bp.get("/plants/stats")
+def plants_stats():
+    """Aggregate stats for the plant library dashboard."""
+    return jsonify(get_plant_stats())
 
 @bp.get("/plants/<int:plant_id>")
 def get_plant_detail(plant_id: int):
@@ -69,13 +78,13 @@ def get_plant_detail(plant_id: int):
     for k in ["parts_used","rasa","guna","dosha_effect","active_compounds","therapeutic_actions"]:
         plant[k] = _safe_json(plant.get(k))
 
-    # --- synonyms
+    # --- synonyms (DISTINCT to avoid duplicate rows in seed data)
     synonyms = [
         _rowdict(r) for r in db.execute("""
-            SELECT synonym AS name, language, kind
+            SELECT DISTINCT synonym AS name, language, kind
             FROM plant_synonyms
             WHERE plant_id = ?
-            ORDER BY id
+            ORDER BY language, synonym
         """, (plant_id,)).fetchall()
     ]
 
@@ -129,14 +138,26 @@ def get_plant_detail(plant_id: int):
             d[k] = _safe_json(d.get(k))
         preparations.append(d)
 
-    # Build final payload (note: no `media`, only `image_hero`)
+    # --- associated diseases
+    disease_rows = db.execute("""
+        SELECT d.id, d.name_en, d.category,
+               pdm.efficacy_level, pdm.evidence_type, pdm.mechanism,
+               pdm.duration_of_use, pdm.special_instructions
+        FROM plant_disease_mapping pdm
+        JOIN diseases d ON d.id = pdm.disease_id
+        WHERE pdm.plant_id = ?
+        ORDER BY pdm.efficacy_level DESC, d.name_en
+    """, (plant_id,)).fetchall()
+    diseases = [_rowdict(r) for r in disease_rows]
+
+    # Build final payload
     payload = {
         "plant": plant,
         "synonyms": synonyms,
         "contraindications": contraindications,
         "interactions": interactions,
         "preparations": preparations,
-        # kept empty for compatibility; frontend should use image_hero only
+        "diseases": diseases,
         "media": []
     }
     return jsonify(payload)

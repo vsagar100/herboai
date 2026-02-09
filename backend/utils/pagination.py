@@ -3,7 +3,9 @@ from flask import request, current_app
 def get_pagination():
     try:
         page = int(request.args.get("page", "1"))
-        size = int(request.args.get("size", current_app.config["DEFAULT_PAGE_SIZE"]))
+        # Accept both "size" and "per_page" for backwards compatibility
+        raw = request.args.get("size") or request.args.get("per_page") or str(current_app.config["DEFAULT_PAGE_SIZE"])
+        size = int(raw)
     except ValueError:
         page = 1
         size = current_app.config["DEFAULT_PAGE_SIZE"]
