@@ -150,7 +150,6 @@ def create_preparation():
             payload.get("anupana"),
             payload.get("notes"),
         ))
-        conn.commit()
         new_id = cur.lastrowid
 
         # Update i18n FTS indexes
@@ -167,6 +166,8 @@ def create_preparation():
             },
         )
 
+        # Single commit after base row + i18n inserts
+        conn.commit()
 
         row = conn.execute("SELECT * FROM preparations WHERE id=?", (new_id,)).fetchone()
         return jsonify(_row_to_dict(row)), 201
@@ -215,9 +216,8 @@ def update_preparation(prep_id):
         cur.execute(f"UPDATE preparations SET {', '.join(sets)} WHERE id=?", params)
         if cur.rowcount == 0:
             return jsonify({"error": "Not found"}), 404
-        conn.commit()
 
-         # Update i18n FTS indexes
+        # Update i18n FTS indexes
         admin_save_with_i18n(
             entity_type="preparation",
             entity_id=prep_id,
@@ -230,6 +230,9 @@ def update_preparation(prep_id):
                 "notes": payload.get("notes"),
             },
         )
+
+        # Single commit after base row + i18n inserts
+        conn.commit()
 
         row = conn.execute("SELECT * FROM preparations WHERE id=?", (prep_id,)).fetchone()
         return jsonify(_row_to_dict(row))

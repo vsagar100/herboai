@@ -25,6 +25,10 @@ const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "http://localhost:5000";
 const BASE_URL = import.meta.env.VITE_API_ORIGIN ? `${API_ORIGIN}/api` : "/api";
 const api = axios.create({ baseURL: BASE_URL, withCredentials: false, timeout: 300000 });
 
+/** Feature flag: show transliteration controls in chat composer */
+const TRANSLITERATION_ENABLED =
+  (import.meta.env.VITE_ENABLE_TRANSLITERATION ?? "true").toString().toLowerCase() !== "false";
+
 /** Utils */
 // save plain text
 function saveTextFile(filename, text) {
@@ -698,8 +702,8 @@ export default function ChatInterface() {
           {/* Composer */}
           <div className="px-6 pt-3 pb-6 bg-white/80 backdrop-blur-md border-t shadow-inner">
             <div className="max-w-4xl mx-auto">
-              {/* Transliteration preview (only when meaningful) */}
-              {translitPreview && (
+              {/* Transliteration preview (only when meaningful and feature is enabled) */}
+              {TRANSLITERATION_ENABLED && translitPreview && (
                 <div className="mb-2 flex items-center gap-2">
                   <span className="text-xs text-gray-500 flex items-center gap-1">
                     <Languages className="w-3.5 h-3.5" />
@@ -728,7 +732,8 @@ export default function ChatInterface() {
                   className="flex-1 px-4 py-3 rounded-full border border-green-200 focus:outline-none focus:ring-2 focus:ring-green-400 bg-white shadow-sm placeholder:text-gray-400 transition-all"
                 />
 
-                {/* Transliteration control button */}
+                {/* Transliteration control button — only when feature flag is on */}
+                {TRANSLITERATION_ENABLED && (
                 <div className="relative">
                   <motion.button
                     id="translit-btn"
@@ -832,6 +837,7 @@ export default function ChatInterface() {
                     </motion.div>
                   )}
                 </div>
+                )}
 
                 <motion.button
                   whileHover={{ scale: 1.05 }}
