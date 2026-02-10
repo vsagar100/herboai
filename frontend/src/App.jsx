@@ -7,6 +7,7 @@ import HomePage from "./pages/HomePage";
 import PlantLibrary from "./pages/PlantLibrary";
 import ChatInterface from "./pages/ChatInterface";
 import AdminPanel from "./pages/AdminPanel";
+import AyushInfo from "./pages/AyushInfo";
 import Contact from "./pages/Contact";
 import Disclaimer from "./pages/Disclaimer";
 import Privacy from "./pages/Privacy";
@@ -43,6 +44,7 @@ export default function App() {
           <Route path="/" element={<HomePage />} />
           <Route path="/library" element={<PlantLibrary />} />
           <Route path="/chat" element={<ChatInterface />} />
+          <Route path="/ayush" element={<AyushInfo />} />
           <Route path="/admin" element={<AdminPanel />} />
           <Route path="/contact" element={<Contact />} />
           <Route path="/disclaimer" element={<Disclaimer />} />

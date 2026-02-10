@@ -132,6 +132,14 @@ export default function Header() {
 
           {/* Right: Admin/Logout + Language */}
           <div className="flex items-center gap-3">
+            <Link
+              to="/ayush"
+              className="hidden sm:inline-flex items-center border-2 border-white/60 text-white px-4 py-2 rounded-lg hover:bg-white/10"
+              title={t?.nav?.ayushInfo || "AYUSH"}
+            >
+              {t?.nav?.ayushInfo || "AYUSH Info"}
+            </Link>
+
             {/* Show Admin Panel link only when NOT logged in */}
             {!checking && !isAdmin && (
               <Link

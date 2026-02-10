@@ -87,6 +87,12 @@ export default function HomePage() {
             >
               {t.welcome.askAI}
             </button>
+            <button
+              onClick={() => navigate("/ayush")}
+              className="border-2 border-green-600 text-green-600 px-8 py-4 rounded-xl font-semibold hover:bg-green-50"
+            >
+              {t?.nav?.ayushInfo || "AYUSH Info"}
+            </button>
           </motion.div>
         </div>
 

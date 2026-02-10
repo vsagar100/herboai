@@ -220,6 +220,7 @@ def create_disease():
     cols = ", ".join(payload.keys())
     qs = ", ".join(["?"] * len(payload))
     db.execute(f"INSERT INTO diseases ({cols}) VALUES ({qs})", tuple(payload.values()))
+    db.commit()
     new_id = db.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
 
     admin_save_with_i18n(
@@ -233,9 +234,6 @@ def create_disease():
             "prevention_tips": payload.get("prevention_tips"),
         },
     )
-
-    # Single commit after base row + i18n inserts
-    db.commit()
 
     row = db.execute("SELECT * FROM diseases WHERE id=?", (new_id,)).fetchone()
     return jsonify(_row_to_obj(row)), 201
@@ -269,6 +267,8 @@ def update_disease(disease_id: int):
         if cur.rowcount == 0:
             return jsonify({"error": "Not found"}), 404
 
+        db.commit()
+
         admin_save_with_i18n(
             entity_type="disease",
             entity_id=disease_id,
@@ -280,9 +280,6 @@ def update_disease(disease_id: int):
                 "prevention_tips": payload.get("prevention_tips"),
             },
         )
-
-        # Single commit after base row + i18n inserts
-        db.commit()
 
         row = db.execute("SELECT * FROM diseases WHERE id=?", (disease_id,)).fetchone()
         return jsonify(_row_to_obj(row))

@@ -1,6 +1,6 @@
 import React from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Home, BookOpen, MessageCircle, Shield, AlertTriangle, Leaf } from "lucide-react";
+import { Home, BookOpen, MessageCircle, Shield, AlertTriangle, Leaf, Info } from "lucide-react";
 import { useGlobalState } from "../store";
 import { translations } from "../i18n";
 import { Link } from "react-router-dom";
@@ -12,6 +12,7 @@ export default function Sidebar() {
     { to: "/", label: t.nav.home, icon: Home },
     { to: "/library", label: t.nav.library, icon: BookOpen },
     { to: "/chat", label: t.nav.chat, icon: MessageCircle },
+    { to: "/ayush", label: t.nav.ayushInfo, icon: Info },
     { to: "/admin", label: t.nav.admin, icon: Shield },
   ];
 

@@ -108,6 +108,7 @@ const NAV = [
   { key: "plants", label: "Plants" },
   { key: "diseases", label: "Diseases" },
   { key: "preparations", label: "Preparations" },
+  { key: "knowledge", label: "Knowledge" },
 ];
 
 function AdminShell({ current, setCurrent, children }) {
@@ -1073,6 +1074,216 @@ function PreparationsPage(){
   );
 }
 
+// ------------------ Knowledge (AYUSH KB) ------------------
+function KnowledgeModal({ open, initial, onClose, onSaved }) {
+  const [slug, setSlug] = useState(initial?.slug || "");
+  const [titleEn, setTitleEn] = useState(initial?.title_en || "");
+  const [keywordsEn, setKeywordsEn] = useState(initial?.keywords_en || "");
+  const [bodyEn, setBodyEn] = useState(initial?.body_en || "");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    setSlug(initial?.slug || "");
+    setTitleEn(initial?.title_en || "");
+    setKeywordsEn(initial?.keywords_en || "");
+    setBodyEn(initial?.body_en || "");
+    setErr("");
+  }, [initial, open]);
+
+  if (!open) return null;
+
+  async function save() {
+    setSaving(true);
+    setErr("");
+    try {
+      const payload = {
+        slug: slug.trim(),
+        title_en: titleEn.trim(),
+        body_en: bodyEn.trim(),
+        keywords_en: keywordsEn.trim(),
+      };
+      if (!payload.slug || !payload.title_en || !payload.body_en) {
+        throw new Error("slug, title, body are required");
+      }
+
+      if (initial?.id) {
+        await api(`/api/admin/kb/ayush/articles/${initial.id}`, { method: "PUT", body: payload });
+      } else {
+        await api(`/api/admin/kb/ayush/articles`, { method: "POST", body: payload });
+      }
+      onSaved?.();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 px-4">
+      <div className="w-full max-w-3xl rounded-3xl bg-white p-6 shadow-2xl ring-1 ring-slate-100">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-semibold">{initial?.id ? "Edit Article" : "Add Article"}</h3>
+          <OutlineButton onClick={onClose}>Close</OutlineButton>
+        </div>
+
+        {err && <div className="mt-3 rounded-xl bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">{err}</div>}
+
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="mb-1 block text-sm font-medium">Slug</label>
+            <Input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="e.g. ayush-what" />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium">Keywords (comma-separated)</label>
+            <Input value={keywordsEn} onChange={(e) => setKeywordsEn(e.target.value)} placeholder="ayush, ayurveda, yoga" />
+          </div>
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-sm font-medium">Title (English)</label>
+            <Input value={titleEn} onChange={(e) => setTitleEn(e.target.value)} placeholder="Title" />
+          </div>
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-sm font-medium">Body (English)</label>
+            <TextArea value={bodyEn} onChange={(e) => setBodyEn(e.target.value)} rows={12} placeholder="Write content here…" />
+          </div>
+        </div>
+
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <OutlineButton onClick={onClose} disabled={saving}>Cancel</OutlineButton>
+          <Button onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function KnowledgePage() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(null);
+  const [toast, setToast] = useState(null);
+
+  const [navJson, setNavJson] = useState("[]");
+  const [navSaving, setNavSaving] = useState(false);
+  const [navErr, setNavErr] = useState("");
+
+  const columns = useMemo(() => [
+    { key: "id", header: "ID" },
+    { key: "slug", header: "Slug" },
+    { key: "title_en", header: "Title" },
+    { key: "updated_at", header: "Updated" },
+  ], []);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const r = await api("/api/admin/kb/ayush/articles");
+      setRows(r.items || []);
+    } catch (e) {
+      setToast({ kind: "error", text: e.message });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadNav() {
+    setNavErr("");
+    try {
+      const r = await api("/api/admin/kb/ayush/nav");
+      setNavJson(r?.nav_json || "[]");
+    } catch (e) {
+      setNavErr(e.message);
+      setNavJson("[]");
+    }
+  }
+
+  useEffect(() => {
+    load();
+    loadNav();
+  }, []);
+
+  async function editRow(row) {
+    try {
+      const full = await api(`/api/admin/kb/ayush/articles/${row.id}`);
+      setEditing(full);
+    } catch (e) {
+      setToast({ kind: "error", text: e.message });
+    }
+  }
+
+  async function remove(row) {
+    if (!confirm(`Delete “${row.slug}”? This cannot be undone.`)) return;
+    try {
+      await api(`/api/admin/kb/ayush/articles/${row.id}`, { method: "DELETE" });
+      setToast({ text: "Deleted" });
+      load();
+    } catch (e) {
+      setToast({ kind: "error", text: e.message });
+    }
+  }
+
+  async function saveNav() {
+    setNavSaving(true);
+    setNavErr("");
+    try {
+      await api("/api/admin/kb/ayush/nav", { method: "PUT", body: { nav_json: navJson } });
+      setToast({ text: "Navigation saved" });
+      loadNav();
+    } catch (e) {
+      setNavErr(e.message);
+    } finally {
+      setNavSaving(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <Section
+        title="Knowledge (AYUSH Info)"
+        actions={<Button onClick={() => setEditing({})}>Add Article</Button>}
+      >
+        <DataGrid
+          columns={columns}
+          rows={rows}
+          page={1}
+          size={rows.length || 10}
+          total={rows.length}
+          onPage={() => {}}
+          onSize={() => {}}
+          onEdit={editRow}
+          onDelete={remove}
+          loading={loading}
+        />
+      </Section>
+
+      <Section
+        title="AYUSH Info Links (nav JSON)"
+        actions={<Button onClick={saveNav} disabled={navSaving}>{navSaving ? "Saving…" : "Save Links"}</Button>}
+      >
+        {navErr && <div className="mb-3 rounded-xl bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">{navErr}</div>}
+        <TextArea rows={10} value={navJson} onChange={(e) => setNavJson(e.target.value)} />
+        <div className="mt-2 text-xs text-slate-500">
+          Format: an array of groups: {'[{ "title": "...", "items": [{"label":"...","slug":"..."}]}]'}
+        </div>
+      </Section>
+
+      <KnowledgeModal
+        open={!!editing}
+        initial={editing || null}
+        onClose={() => setEditing(null)}
+        onSaved={() => {
+          setEditing(null);
+          setToast({ text: "Saved" });
+          load();
+        }}
+      />
+
+      {toast && <Toast {...toast} onClose={() => setToast(null)} />}
+    </div>
+  );
+}
+
 // ------------------ AYUSH Systems (unchanged scaffold) ------------------
 function SystemsPage(){
   const [rows, setRows] = useState([]);
@@ -1140,6 +1351,7 @@ export default function AdminPanel(){
       {current === "plants" && <PlantsPage />}
       {current === "diseases" && <DiseasesPage />}
       {current === "preparations" && <PreparationsPage />}
+      {current === "knowledge" && <KnowledgePage />}
       {current === "systems" && <SystemsPage />}
     </AdminShell>
   );

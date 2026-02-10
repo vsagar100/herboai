@@ -32,6 +32,7 @@ from semantic import top_plants_for_disease, top_preparations_for_disease, ingre
 from services.severity import assess_severity
 from services.followups import generate_followup_questions
 from services.indic_translation_service import translate_to_en, translate_from_en
+from services.ayush_kb import maybe_answer_ayush_kb
 from repositories.search_repo import (
     vector_search_preparations_lang,
     hydrate_preparations,
@@ -1461,6 +1462,29 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
     # operate on the original (possibly non-English) text
     # to give a native-language experience.
     text_en = user_text if lang == "en" else translate_to_en(user_text, lang_hint=lang)
+
+    # -----------------------------
+    # AYUSH KB: route high-signal general-info / lifestyle queries early.
+    # Do this BEFORE intent classification and entity extraction so:
+    # - false-positive intent (e.g., "digestion" => remedy_lookup) doesn't steal lifestyle questions
+    # - false-positive entity matches don't block informational KB answers
+    # The KB layer itself contains guard rails to avoid stealing true remedy/treatment queries.
+    # -----------------------------
+    kb_answer = maybe_answer_ayush_kb(
+        user_text=user_text,
+        text_en=text_en,
+        lang=lang,
+        entities={},
+    )
+    if kb_answer:
+        return {
+            "answer": kb_answer,
+            "severity": {"band": "low", "red_flags": []},
+            "followups": [],
+            "provisional": [],
+            "structured": {"intent": "ayush_kb"},
+            "session_id": sess["id"],
+        }
 
     # NLU
     try:

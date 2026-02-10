@@ -11,6 +11,8 @@ from api.admin_auth import admin_auth_bp
 from api.admin_plants import admin_plants_bp
 from api.admin_diseases import admin_diseases_bp
 from api.admin_preparations import admin_prep_bp
+from api.kb_ayush import kb_ayush_bp
+from api.admin_kb import admin_kb_bp
 from api.vec_health import bp as vec_bp 
 from api.mt_health import bp as mt_bp
 import threading
@@ -89,6 +91,8 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     app.register_blueprint(admin_plants_bp, url_prefix="/api/admin")
     app.register_blueprint(admin_diseases_bp, url_prefix="/api/admin")
     app.register_blueprint(admin_prep_bp, url_prefix="/api/admin")
+    app.register_blueprint(kb_ayush_bp, url_prefix="/api")
+    app.register_blueprint(admin_kb_bp, url_prefix="/api/admin")
 
     # Health check endpoint (with translator status)
     @app.get("/api/health")
@@ -101,12 +105,18 @@ def create_app(config_object: type[Config] = Config) -> Flask:
         except Exception:
             translator_ready = False
             has_translator = False
+
+        try:
+            has_ayush_routes = any("/kb/ayush/" in r.rule for r in app.url_map.iter_rules())
+        except Exception:
+            has_ayush_routes = False
         
         return {
             "status": "ok",
             "service": "herboai-backend",
             "translator_ready": translator_ready,
-             "translator_loaded": has_translator
+            "translator_loaded": has_translator,
+            "ayush_routes": has_ayush_routes,
         }, 200
 
     # Start model preloading in background thread

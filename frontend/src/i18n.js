@@ -6,7 +6,12 @@ export const translations = {
       home: "Home",
       library: "Plant Library",
       chat: "AI Assistant",
+      ayushInfo: "AYUSH Info",
       admin: "Admin Panel",
+    },
+    ayushInfo: {
+      title: "AYUSH Info",
+      description: "Learn what AYUSH covers and safe lifestyle basics.",
     },
     welcome: {
       title: "Welcome to HerboAI",
@@ -106,6 +111,9 @@ export const translations = {
           "I have arthritis. What helps?",
           "I have hypertension. What helps?",
           "I have indigestion. What helps?",
+          "What is AYUSH and what does it include?",
+          "What are basic daily routine (Dinacharya) tips?",
+          "Safe Ayurvedic lifestyle tips for better digestion?",
         ],
         preparations: [
           "How to prepare Gudmar decoction?",
@@ -192,7 +200,12 @@ export const translations = {
       home: "होम",
       library: "पौधों का पुस्तकालय",
       chat: "AI सहायक",
+      ayushInfo: "AYUSH जानकारी",
       admin: "एडमिन पैनल",
+    },
+    ayushInfo: {
+      title: "AYUSH जानकारी",
+      description: "AYUSH क्या है और सुरक्षित जीवनशैली की बुनियादी बातें।",
     },
     welcome: {
       title: "हर्बोAI में आपका स्वागत है",
@@ -291,6 +304,9 @@ export const translations = {
           "मुझे गठिया है। क्या मदद करेगा?",
           "मुझे उच्च रक्तचाप है। क्या मदद करेगा?",
           "मुझे अपच है। क्या मदद करेगा?",
+          "AYUSH क्या है और इसमें क्या-क्या शामिल है?",
+          "दिनचर्या (Daily routine) की बुनियादी बातें क्या हैं?",
+          "पाचन के लिए सुरक्षित आयुर्वेदिक जीवनशैली सुझाव क्या हैं?",
         ],
         preparations: [
           "गुड़मार का काढ़ा कैसे बनाएं?",
@@ -377,7 +393,12 @@ export const translations = {
       home: "होम",
       library: "वनस्पती ग्रंथालय",
       chat: "AI सहाय्यक",
+      ayushInfo: "AYUSH माहिती",
       admin: "प्रशासक पॅनेल",
+    },
+    ayushInfo: {
+      title: "AYUSH माहिती",
+      description: "AYUSH मध्ये काय येते आणि सुरक्षित जीवनशैलीची मूलतत्त्वे.",
     },
     welcome: {
       title: "हर्बोAI मध्ये आपले स्वागत आहे",
@@ -476,6 +497,9 @@ export const translations = {
           "मला संधिवात आहे. काय उपयोगी पडेल?",
           "मला उच्च रक्तदाब आहे. काय उपयोगी पडेल?",
           "मला अपचन आहे. काय उपयोगी पडेल?",
+          "AYUSH म्हणजे काय आणि त्यात काय समाविष्ट आहे?",
+          "दिनचर्या (Daily routine) ची मूलभूत तत्त्वे काय आहेत?",
+          "पचन सुधारण्यासाठी सुरक्षित आयुर्वेदिक जीवनशैली सल्ले कोणते?",
         ],
         preparations: [
           "गुडमारचा काढा कसा बनवायचा?",
