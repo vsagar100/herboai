@@ -1607,6 +1607,21 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
         toks = _simple_tokens(en_text)
         return toks[-1].lower() if toks else None
 
+    def _plant_explicitly_mentioned(plant_row: dict, original_text: str, translated_text: str | None) -> bool:
+        """Return True if the candidate plant is explicitly mentioned in user text.
+
+        Prep queries must not 'guess' a plant purely from embeddings.
+        This prevents wrong-plant prep answers like Neem -> Kalmegh.
+        """
+        hay = f"{original_text or ''} {translated_text or ''}".lower()
+        for key in ("common_name_en", "botanical_name", "sanskrit_name", "name_en", "name"):
+            v = plant_row.get(key)
+            if isinstance(v, str):
+                n = v.strip().lower()
+                if n and n in hay:
+                    return True
+        return False
+
     def _find_plant_id(term: str | None) -> int | None:
         if not term:
             return None
@@ -1738,11 +1753,18 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
                 if isinstance(first_plant, dict):
                     # Only use if found via text/DB match (not low-confidence vector)
                     vec_dist = first_plant.get("_vec_distance")
-                    if vec_dist is None or float(vec_dist) < 0.85:
+                    if vec_dist is None:
                         plant_id = first_plant.get("id")
                         if plant_id:
                             plant_id = int(plant_id)
-                            print(f"[PREP PATH] Plant from NLU entities: id={plant_id} name={first_plant.get('common_name_en')}")
+                            print(f"[PREP PATH] Plant from NLU entities (text-backed): id={plant_id} name={first_plant.get('common_name_en')}")
+                    else:
+                        # Vector-derived plant entities are accepted only if explicitly mentioned.
+                        if float(vec_dist) < 0.85 and _plant_explicitly_mentioned(first_plant, user_text, text_en):
+                            plant_id = first_plant.get("id")
+                            if plant_id:
+                                plant_id = int(plant_id)
+                                print(f"[PREP PATH] Plant from NLU entities (vec+explicit): id={plant_id} name={first_plant.get('common_name_en')}")
 
         # ── Strategy 2: search_plants_fuzzy on original Marathi/Hindi text ──
         if not plant_id:
@@ -1751,9 +1773,13 @@ def handle_chat(user_text: str, session_id: str | None, lang: str | None = None)
             if plant_results:
                 candidate = plant_results[0]
                 vec_dist = candidate.get("_vec_distance")
-                if vec_dist is None or float(vec_dist) < 0.85:
+                if vec_dist is None:
                     plant_id = int(candidate.get("id"))
-                    print(f"[PREP PATH] Plant from fuzzy search: id={plant_id} name={candidate.get('common_name_en')}")
+                    print(f"[PREP PATH] Plant from fuzzy search (text-backed): id={plant_id} name={candidate.get('common_name_en')}")
+                else:
+                    if float(vec_dist) < 0.85 and _plant_explicitly_mentioned(candidate, user_text, text_en):
+                        plant_id = int(candidate.get("id"))
+                        print(f"[PREP PATH] Plant from fuzzy search (vec+explicit): id={plant_id} name={candidate.get('common_name_en')}")
 
         # ── Strategy 3: Legacy _extract_plant_term + _find_plant_id ──
         if not plant_id:

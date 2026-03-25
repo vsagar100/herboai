@@ -1,4 +1,7 @@
-from flask import Blueprint, request, jsonify, abort
+from flask import Blueprint, request, jsonify, abort, current_app
+import base64
+import mimetypes
+import os
 import sqlite3
 import json
 import time
@@ -211,6 +214,40 @@ def list_plants_brief():
         items.append(d)
 
     return jsonify({"items": items, "limit": limit, "offset": offset, "count": len(items)})
+
+
+@bp.get("/file_base64")
+def file_base64():
+    """Return a data URL for a media file under MEDIA_ROOT.
+
+    Query params:
+      - path: filename or path relative to MEDIA_ROOT (e.g. Vijayasar.jpg or images/Vijayasar.jpg)
+    """
+    path = (request.args.get("path") or "").strip()
+    if not path:
+        abort(400, description="Missing 'path' parameter")
+
+    # strip leading / and optional files/ prefix
+    if path.startswith("/"):
+        path = path[1:]
+    if path.startswith("files/"):
+        path = path[len("files/"):]
+
+    safe_path = os.path.normpath(path).lstrip(os.sep)
+    root = current_app.config.get("MEDIA_ROOT") or current_app.config.get("FILE_ROOT")
+    if not root:
+        abort(404)
+
+    full = os.path.join(root, safe_path)
+    if not os.path.isfile(full):
+        abort(404)
+
+    mime = mimetypes.guess_type(full)[0] or "application/octet-stream"
+    with open(full, "rb") as fh:
+        data = fh.read()
+    b64 = base64.b64encode(data).decode("ascii")
+    data_url = f"data:{mime};base64,{b64}"
+    return jsonify({"data_url": data_url})
 
 @bp.get("/diseases")
 def diseases():

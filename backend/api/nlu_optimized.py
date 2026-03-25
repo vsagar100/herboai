@@ -165,6 +165,12 @@ def detect_language(text: str) -> str:
     if not text:
         return "en"
 
+    # If there's no Devanagari script at all, treat as English.
+    # This avoids misclassifying Latin-script queries (e.g. "Neem oil usage for skin")
+    # as hi/mr and then running incorrect translation.
+    if not DEVANAGARI_RE.search(text):
+        return "en"
+
     # Prefer the shared detector (no model load; pure heuristics)
     if IndicTranslationService:
         try:
@@ -173,8 +179,7 @@ def detect_language(text: str) -> str:
             pass
 
     t = text.lower()
-    if not DEVANAGARI_RE.search(t):
-        return "en"
+
 
     mr_count = sum(1 for marker in MR_MARKERS if marker in t)
     hi_count = sum(1 for marker in HI_MARKERS if marker in t)
@@ -718,8 +723,15 @@ def search_preparations_fuzzy(query: str, limit: int = 5) -> List[Dict]:
         try:
             from services.chat import _embed_384
             qvec = _embed_384(query)
-            for vtable in ("preparation_vec_mr", "preparation_vec_hi",
-                           "preparation_vec_en", "preparation_vec"):
+
+            # NOTE:
+            # This codebase's canonical vec tables are named `prep_vec_{lang}` / `prep_vec`
+            # (see backend/db.py and backend/services/indexer.py).
+            # Keep backward-compat by also trying the older `preparation_vec_*` names.
+            for vtable in (
+                "prep_vec_mr", "prep_vec_hi", "prep_vec_en", "prep_vec",
+                "preparation_vec_mr", "preparation_vec_hi", "preparation_vec_en", "preparation_vec",
+            ):
                 try:
                     id_col = "preparation_id"
                     vec_rows = cur.execute(f"""

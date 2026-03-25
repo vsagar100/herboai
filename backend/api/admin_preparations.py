@@ -150,7 +150,6 @@ def create_preparation():
             payload.get("anupana"),
             payload.get("notes"),
         ))
-        conn.commit()
         new_id = cur.lastrowid
 
         # Update i18n FTS indexes
@@ -167,6 +166,9 @@ def create_preparation():
             },
         )
 
+        # Commit AFTER i18n + index rebuild so multilingual + retrieval are consistent
+        conn.commit()
+
 
         row = conn.execute("SELECT * FROM preparations WHERE id=?", (new_id,)).fetchone()
         return jsonify(_row_to_dict(row)), 201
@@ -175,6 +177,10 @@ def create_preparation():
     except sqlite3.IntegrityError as ie:
         return jsonify({"error": f"Integrity error: {ie}"}), 400
     except Exception as e:
+        try:
+            get_db().rollback()
+        except Exception:
+            pass
         return jsonify({"error": f"Server error: {e}"}), 500
 
 @admin_prep_bp.put("/preparations/<int:prep_id>")
@@ -215,9 +221,7 @@ def update_preparation(prep_id):
         cur.execute(f"UPDATE preparations SET {', '.join(sets)} WHERE id=?", params)
         if cur.rowcount == 0:
             return jsonify({"error": "Not found"}), 404
-        conn.commit()
-
-         # Update i18n FTS indexes
+        # Update i18n + indexes in the same transaction
         admin_save_with_i18n(
             entity_type="preparation",
             entity_id=prep_id,
@@ -231,6 +235,8 @@ def update_preparation(prep_id):
             },
         )
 
+        conn.commit()
+
         row = conn.execute("SELECT * FROM preparations WHERE id=?", (prep_id,)).fetchone()
         return jsonify(_row_to_dict(row))
     except ValueError as ve:
@@ -238,6 +244,10 @@ def update_preparation(prep_id):
     except sqlite3.IntegrityError as ie:
         return jsonify({"error": f"Integrity error: {ie}"}), 400
     except Exception as e:
+        try:
+            get_db().rollback()
+        except Exception:
+            pass
         return jsonify({"error": f"Server error: {e}"}), 500
 
 @admin_prep_bp.delete("/preparations/<int:prep_id>")

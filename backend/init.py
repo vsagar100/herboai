@@ -73,7 +73,8 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     app.json.ensure_ascii = False
 
     CORS(app,
-         resources={r"/api/*": {"origins": ["http://localhost:5173", "http://127.0.0.1:5173", "*"]}},
+         resources={r"/api/*": {"origins": ["http://localhost:5173", "http://127.0.0.1:5173", "*"]},
+                    r"/files/*": {"origins": ["http://localhost:5173", "http://127.0.0.1:5173", "*"]}},
          supports_credentials=True,
          allow_headers=["Content-Type", "Authorization", "x-session-id"],
          expose_headers=["Content-Type", "Authorization"],

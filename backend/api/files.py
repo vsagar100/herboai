@@ -19,4 +19,7 @@ def serve_file(filename: str):
     resp = make_response(send_from_directory(root, safe_path))
     # Cache for a week; tweak as needed
     resp.headers["Cache-Control"] = "public, max-age=604800"
+    # Allow any origin for static media so frontend image tags load without CORS errors
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Credentials"] = "false"
     return resp
