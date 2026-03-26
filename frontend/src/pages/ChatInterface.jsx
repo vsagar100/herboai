@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
+import ReactDOM from "react-dom";
 import { motion } from "framer-motion";
 import {
   MessageCircle,
@@ -219,7 +220,7 @@ const SuggestionPanel = ({ onUse, t }) => {
   const Chip = ({ label }) => (
     <button
       onClick={() => onUse(label)}
-      className="rounded-full border border-green-100 bg-white/70 px-3 py-2 text-sm text-gray-700 transition hover:bg-white"
+      className="w-full text-left rounded-xl border border-green-100 bg-white/70 px-4 py-3 text-sm text-gray-700 transition hover:bg-white"
       type="button"
     >
       {label}
@@ -230,7 +231,7 @@ const SuggestionPanel = ({ onUse, t }) => {
     <div className="flex h-full flex-col gap-6">
       <div>
         <h3 className="mb-3 text-sm font-semibold text-green-700">{sug.quickConditionsTitle}</h3>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-col gap-3 items-start">
           {(sug.conditions || []).map((item) => (
             <Chip key={item} label={item} />
           ))}
@@ -239,7 +240,7 @@ const SuggestionPanel = ({ onUse, t }) => {
 
       <div>
         <h3 className="mb-3 text-sm font-semibold text-green-700">{sug.preparationsTitle}</h3>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-col gap-3 items-start">
           {(sug.preparations || []).map((item) => (
             <Chip key={item} label={item} />
           ))}
@@ -248,7 +249,7 @@ const SuggestionPanel = ({ onUse, t }) => {
 
       <div>
         <h3 className="mb-3 text-sm font-semibold text-green-700">{sug.plantsTitle}</h3>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-col gap-3 items-start">
           {(sug.plants || []).map((item) => (
             <Chip key={item} label={item} />
           ))}
@@ -463,6 +464,52 @@ const PdfExportView = React.forwardRef(function PdfExportView({ message, languag
 });
 
 const MessageBubble = ({ message, onPlantClick, onToggleDownloadMenu, downloadMenuOpen, onDownloadText, onDownloadPdf, onDownloadJson }) => {
+  const toggleRef = useRef(null);
+  const menuRef = useRef(null);
+  const [menuPos, setMenuPos] = useState(null);
+
+  useEffect(() => {
+    if (message.sender !== "ai") return;
+    if (downloadMenuOpen !== message.id) return;
+    const el = toggleRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setMenuPos({ top: r.bottom + window.scrollY + 6, left: r.left + window.scrollX });
+
+    const onScroll = () => {
+      const rr = el.getBoundingClientRect();
+      setMenuPos({ top: rr.bottom + window.scrollY + 6, left: rr.left + window.scrollX });
+    };
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onScroll);
+    return () => {
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [downloadMenuOpen, message.id, message.sender]);
+
+  useEffect(() => {
+    if (message.sender !== "ai") return;
+    if (downloadMenuOpen !== message.id) return;
+    const onDown = (ev) => {
+      const m = menuRef.current;
+      const t = toggleRef.current;
+      if (m && (m.contains(ev.target) || (t && t.contains(ev.target)))) return;
+      onToggleDownloadMenu(null);
+    };
+    const onKey = (ev) => {
+      if (ev.key === "Escape") onToggleDownloadMenu(null);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("touchstart", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("touchstart", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [downloadMenuOpen, message.id, message.sender, onToggleDownloadMenu]);
+
   return (
     <motion.div
       initial={{ opacity: 0, y: message.sender === "user" ? 20 : -10 }}
@@ -528,6 +575,7 @@ const MessageBubble = ({ message, onPlantClick, onToggleDownloadMenu, downloadMe
         {message.sender === "ai" && (
           <div className="relative mt-2">
             <button
+              ref={toggleRef}
               onClick={() => onToggleDownloadMenu(downloadMenuOpen === message.id ? null : message.id)}
               className="flex items-center gap-2 rounded-lg px-4 py-2 text-sm text-gray-600 transition-colors hover:bg-green-50 hover:text-green-600"
               type="button"
@@ -536,14 +584,16 @@ const MessageBubble = ({ message, onPlantClick, onToggleDownloadMenu, downloadMe
               <span>Download Response</span>
             </button>
 
-            {downloadMenuOpen === message.id && (
+            {downloadMenuOpen === message.id && menuPos && ReactDOM.createPortal(
               <motion.div
+                ref={menuRef}
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="absolute left-0 z-10 mt-1 w-56 rounded-lg border border-gray-200 bg-white py-2 shadow-lg"
+                style={{ position: "absolute", top: `${menuPos.top}px`, left: `${menuPos.left}px`, zIndex: 9999 }}
+                className="w-56 rounded-lg border border-gray-200 bg-white py-2 shadow-lg"
               >
                 <button
-                  onClick={() => onDownloadText(message)}
+                  onClick={() => { onDownloadText(message); onToggleDownloadMenu(null); }}
                   className="flex w-full items-center gap-3 px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
                   type="button"
                 >
@@ -555,7 +605,7 @@ const MessageBubble = ({ message, onPlantClick, onToggleDownloadMenu, downloadMe
                 </button>
 
                 <button
-                  onClick={() => onDownloadPdf(message)}
+                  onClick={() => { onDownloadPdf(message); onToggleDownloadMenu(null); }}
                   className="flex w-full items-center gap-3 px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
                   type="button"
                 >
@@ -567,7 +617,7 @@ const MessageBubble = ({ message, onPlantClick, onToggleDownloadMenu, downloadMe
                 </button>
 
                 <button
-                  onClick={() => onDownloadJson(message)}
+                  onClick={() => { onDownloadJson(message); onToggleDownloadMenu(null); }}
                   className="flex w-full items-center gap-3 px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
                   type="button"
                 >
@@ -577,7 +627,8 @@ const MessageBubble = ({ message, onPlantClick, onToggleDownloadMenu, downloadMe
                     <div className="text-xs text-gray-500">Structured response</div>
                   </div>
                 </button>
-              </motion.div>
+              </motion.div>,
+              document.body
             )}
           </div>
         )}
@@ -969,6 +1020,29 @@ export default function ChatInterface() {
       if (!relatedPlants.length && onePlant) {
         const normalized = normalizePlant(onePlant);
         if (normalized) relatedPlants = [normalized];
+      }
+
+      // Prefetch brief info for plants that lack an image so chat thumbnails show correctly
+      const needImage = relatedPlants.filter(
+        (p) => !p || (!p.images || !p.images[0] || !p.images[0].path) && !p.image_url
+      );
+      if (needImage.length) {
+        await Promise.all(
+          needImage.map(async (p) => {
+            if (!p || !p.id) return;
+            try {
+              const { data } = await api.get(`/plants/${p.id}/brief`);
+              const img = data?.image_url || data?.image_hero || null;
+              if (img) {
+                const resolved = /^https?:\/\//i.test(img) ? img : `${API_ORIGIN}/${img.startsWith("files/") ? img : `files/${img}`}`;
+                p.images = [{ path: resolved }];
+                p.image_url = resolved;
+              }
+            } catch (e) {
+              // ignore
+            }
+          })
+        );
       }
 
       const aiMsg = {
