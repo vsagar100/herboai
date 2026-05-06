@@ -21,6 +21,99 @@ except Exception:
 # Language detection patterns
 DEVANAGARI_RE = re.compile(r"[\u0900-\u097F]")
 
+def _compute_name_score(row: Dict, qtokens: List[str], qnorm: str) -> int:
+    """
+    Heuristic score to prefer exact / whole-word matches over substring
+    or semantic hits. Higher is better.
+    """
+    score = 0
+    # fields to check (may be None)
+    names = [
+        (row.get("common_name_en") or ""),
+        (row.get("botanical_name") or ""),
+        (row.get("common_name_hi") or ""),
+        (row.get("common_name_mr") or ""),
+        (row.get("classical_name") or ""),
+    ]
+    # normalize function
+    def _norm(s: str) -> str:
+        return re.sub(r"[^\w\u0900-\u097F]+", " ", (s or "").lower()).strip()
+
+    norm_names = [_norm(n) for n in names]
+
+    # exact full-query match wins
+    for n in norm_names:
+        if n and n == qnorm:
+            return 100
+
+    # token-level scoring: expand token variants (transliteration, stems)
+    expanded_tokens_norm: List[str] = []
+    for tok in qtokens:
+        try:
+            variants = _expand_token_variants(tok)
+        except Exception:
+            variants = [tok]
+        for v in variants:
+            nv = _norm(v)
+            if nv and nv not in expanded_tokens_norm:
+                expanded_tokens_norm.append(nv)
+
+    for tok_norm in expanded_tokens_norm:
+        for n in norm_names:
+            if not n:
+                continue
+            if n == tok_norm:
+                score += 50
+            elif (" " + tok_norm + " ") in (" " + n + " "):
+                score += 30
+            elif tok_norm in n:
+                score += 8
+
+    # Penalize seed-specific rows when user didn't ask for seed
+    try:
+        en = (row.get("common_name_en") or "").lower()
+        if "seed" in en and all("seed" not in t for t in qtokens + [qnorm]):
+            score -= 40
+    except Exception:
+        pass
+
+    # synonyms / source hints (if available)
+    if row.get("source") == "synonym":
+        score += 5
+
+    return score
+
+
+def _expand_token_variants(token: str) -> List[str]:
+    """Expand a Latin/Devanagari token using TRANSLITERATION_MAP (both directions).
+    Returns normalized lowercase variants suitable for equality checks.
+    """
+    token_l = (token or "").lower().strip()
+    variants = {token_l}
+    # direct lookup
+    if token_l in TRANSLITERATION_MAP:
+        variants.add(TRANSLITERATION_MAP[token_l].lower())
+
+    # reverse lookup: find keys that map to this dev form
+    for k, v in TRANSLITERATION_MAP.items():
+        if v and v.lower() == token_l:
+            variants.add(k.lower())
+
+    # include any transliteration keys where token is a substring (amar -> amalaki)
+    for k, v in TRANSLITERATION_MAP.items():
+        try:
+            if token_l in (k or "").lower():
+                variants.add(k.lower())
+            if token_l in (v or "").lower():
+                variants.add(k.lower())
+        except Exception:
+            continue
+
+    # also include plain ascii alikes (underscore removal etc.)
+    variants.add(token_l.replace("_", " "))
+    variants.add(re.sub(r"[^\w\u0900-\u097F]+", " ", token_l))
+
+    return list(variants)
 # Lightweight markers as a fallback if shared detector is unavailable
 MR_MARKERS = {
     "बद्दल", "माहिती", "तुळस", "गुळवेल", "औषधी", "काढा",
@@ -187,6 +280,71 @@ def detect_language(text: str) -> str:
         return "mr"
     return "hi"
 
+
+def _has_plant_db_evidence(text: str, max_tokens: int = 4) -> bool:
+    """Quick, lightweight DB-backed check for plant-name evidence in the query.
+    Returns True if any prioritized token maps to a plant synonym / i18n / base-name.
+    This is intentionally conservative and cheap (LIMIT 1 checks).
+    """
+    try:
+        db = get_db()
+        cur = db.cursor()
+        tokens = _prioritized_tokens(text)[:max_tokens]
+        if not tokens:
+            return False
+
+        for tok in tokens:
+            variants = normalize_query_token(tok) or [tok]
+            for v in variants[:3]:
+                v_l = (v or "").lower().strip()
+                if not v_l:
+                    continue
+                try:
+                    if cur.execute("SELECT 1 FROM plant_synonyms WHERE LOWER(synonym)=? LIMIT 1", (v_l,)).fetchone():
+                        _nlu_log.debug(f"[NLU] DB evidence: plant_synonym exact for {v_l}")
+                        return True
+                except Exception:
+                    pass
+                try:
+                    if cur.execute("SELECT 1 FROM entity_i18n WHERE entity_type='plant' AND LOWER(text)=? LIMIT 1", (v_l,)).fetchone():
+                        _nlu_log.debug(f"[NLU] DB evidence: entity_i18n exact for {v_l}")
+                        return True
+                except Exception:
+                    pass
+                try:
+                    if cur.execute(
+                        """
+                        SELECT 1 FROM plants
+                        WHERE LOWER(common_name_en)=? OR LOWER(botanical_name)=? OR LOWER(common_name_hi)=? OR LOWER(common_name_mr)=? OR LOWER(classical_name)=? OR LOWER(sanskrit_name)=?
+                        LIMIT 1
+                        """,
+                        (v_l, v_l, v_l, v_l, v_l, v_l),
+                    ).fetchone():
+                        _nlu_log.debug(f"[NLU] DB evidence: plants exact for {v_l}")
+                        return True
+                except Exception:
+                    pass
+
+                # Fallback: substring LIKE match on base names
+                try:
+                    like = f"%{v_l}%"
+                    if cur.execute(
+                        """
+                        SELECT 1 FROM plants
+                        WHERE LOWER(common_name_en) LIKE ? OR LOWER(botanical_name) LIKE ? OR LOWER(common_name_hi) LIKE ? OR LOWER(common_name_mr) LIKE ? OR LOWER(classical_name) LIKE ? OR LOWER(sanskrit_name) LIKE ?
+                        LIMIT 1
+                        """,
+                        (like, like, like, like, like, like),
+                    ).fetchone():
+                        _nlu_log.debug(f"[NLU] DB evidence: plants LIKE for {v_l}")
+                        return True
+                except Exception:
+                    pass
+
+        return False
+    except Exception:
+        return False
+
 def classify_intent(text: str) -> str:
     """
     Classify user intent based on query patterns
@@ -208,7 +366,8 @@ def classify_intent(text: str) -> str:
     # --- 2) Signals for plant-info vs. remedy ---
     plant_patterns = [
         "what is", "about", "uses of", "benefits", "properties",
-        "बद्दल", "के बारे", "फायदे", "गुण", "उपयोग", "माहिती"
+        "detail", "details", "information", "info", "tell", "give", "give me", "describe", "what are", "what's",
+        "बद्दल", "के बारे", "फायदे", "गुण", "उपयोग", "माहिती", "जानकारी", "बताओ"
     ]
 
     remedy_patterns = [
@@ -322,9 +481,19 @@ def classify_intent(text: str) -> str:
     if has_disease_kw or has_remedy:
         return "remedy_lookup"
 
+    # DB-backed evidence: if query tokens map to plant synonyms / i18n / base names
+    # prefer plant_info even when surface signals are weak. This is conservative
+    # and DOES NOT override explicit disease/remedy signals above.
+    try:
+        has_plant_db = _has_plant_db_evidence(t)
+    except Exception:
+        has_plant_db = False
+
     # Pure "about / uses / benefits" queries with no disease/remedy
     # markers fall back to plant_info.
-    if has_plant:
+    if has_plant or has_plant_db:
+        if has_plant_db and not has_plant:
+            _nlu_log.debug(f"[NLU] classify_intent: DB-backed plant evidence for query: {text!r}")
         return "plant_info"
 
     return "none"
@@ -393,18 +562,156 @@ def search_plants_fuzzy(query: str, limit: int = 5) -> List[Dict]:
     if not tokens:
         return []
 
+    # Reorder tokens by whether they are likely to match DB name fields
+    try:
+        token_scores = {}
+        for i, tok in enumerate(tokens):
+            like = f"%{tok}%"
+            score = 0
+            try:
+                r = cur.execute("SELECT COUNT(1) as c FROM plant_synonyms WHERE LOWER(synonym) LIKE ?", (like,)).fetchone()
+                score += int(r["c"] or 0)
+            except Exception:
+                pass
+            try:
+                r = cur.execute("SELECT COUNT(1) as c FROM entity_i18n WHERE entity_type='plant' AND LOWER(text) LIKE ?", (like,)).fetchone()
+                score += int(r["c"] or 0)
+            except Exception:
+                pass
+            try:
+                r = cur.execute(
+                    """
+                    SELECT COUNT(1) as c FROM plants
+                    WHERE LOWER(common_name_en) LIKE ? OR LOWER(botanical_name) LIKE ? OR LOWER(common_name_hi) LIKE ? OR LOWER(common_name_mr) LIKE ? OR LOWER(classical_name) LIKE ? OR LOWER(sanskrit_name) LIKE ?
+                    """,
+                    (like, like, like, like, like, like),
+                ).fetchone()
+                score += int(r["c"] or 0)
+            except Exception:
+                pass
+            token_scores[tok] = (score, i)
+
+        # sort tokens by score desc, then original position
+        tokens = sorted(tokens, key=lambda t: (-token_scores.get(t, (0, 0))[0], token_scores.get(t, (0, 0))[1]))
+    except Exception:
+        pass
+
     all_results: List[Dict] = []
     seen_ids: set = set()
 
+    # prepare normalized forms for scoring
+    def _norm_query(s: str) -> str:
+        return re.sub(r"[^\w\u0900-\u097F]+", " ", (s or "").lower()).strip()
+
+    qtokens = tokens
+    qnorm = _norm_query(query)
+
     def _add(row):
-        pid = row["id"] if isinstance(row, dict) else row[0]
+        # accept either sqlite.Row or dict-like
         if isinstance(row, dict):
             rid = row.get("id")
+            rdict = dict(row)
         else:
-            rid = int(row["id"]) if "id" in row.keys() else int(row[0])
-        if rid not in seen_ids:
-            seen_ids.add(rid)
-            all_results.append(dict(row))
+            # sqlite.Row: convert to dict
+            rdict = dict(row)
+            rid = rdict.get("id")
+        if not rid or rid in seen_ids:
+            return
+        seen_ids.add(rid)
+
+        # If this row was returned by an exact equality query, prefer it strongly
+        src = (rdict.get("source") or "").lower()
+        if src in ("synonym", "i18n", "base"):
+            rdict["_name_score"] = 100
+        else:
+            try:
+                rdict["_name_score"] = _compute_name_score(rdict, qtokens, qnorm)
+            except Exception:
+                rdict["_name_score"] = 0
+
+        all_results.append(rdict)
+
+    # --- HIGH PRIORITY: exact equality matches (canonicalize different phrasings) ---
+    try:
+        primary_toks = [t for t in ([qnorm] + qtokens) if t]
+        for tok in primary_toks:
+            if len(all_results) >= limit:
+                break
+            # Expand token variants using transliteration/alias map
+            variants = _expand_token_variants(tok)
+
+            # 1) exact synonym match (for any variant)
+            try:
+                for v in variants:
+                    if len(all_results) >= limit:
+                        break
+                    rows = cur.execute("""
+                        SELECT p.*, 'synonym' AS source
+                        FROM plant_synonyms ps
+                        JOIN plants p ON p.id = ps.plant_id
+                        WHERE LOWER(ps.synonym) = ?
+                        LIMIT ?
+                    """, (v, limit)).fetchall()
+                    for r in rows:
+                        _add(r)
+                        if len(all_results) >= limit:
+                            break
+            except Exception:
+                pass
+
+            if len(all_results) >= limit:
+                break
+
+            # 2) exact multilingual i18n match
+            try:
+                for v in variants:
+                    if len(all_results) >= limit:
+                        break
+                    rows = cur.execute("""
+                        SELECT p.*, 'i18n' AS source
+                        FROM entity_i18n ei
+                        JOIN plants p ON p.id = ei.entity_id
+                        WHERE ei.entity_type = 'plant'
+                          AND LOWER(ei.text) = ?
+                        LIMIT ?
+                    """, (v, limit)).fetchall()
+                    for r in rows:
+                        _add(r)
+                        if len(all_results) >= limit:
+                            break
+            except Exception:
+                pass
+
+            if len(all_results) >= limit:
+                break
+
+            # 3) exact match in base-table name fields (including sanskrit/classical)
+            try:
+                for v in variants:
+                    if len(all_results) >= limit:
+                        break
+                    rows = cur.execute("""
+                        SELECT p.*, 'base' AS source
+                        FROM plants p
+                        WHERE LOWER(p.common_name_en) = ?
+                           OR LOWER(p.botanical_name) = ?
+                           OR LOWER(p.common_name_hi) = ?
+                           OR LOWER(p.common_name_mr) = ?
+                           OR LOWER(p.classical_name) = ?
+                           OR LOWER(p.sanskrit_name) = ?
+                        LIMIT ?
+                    """, (v, v, v, v, v, v, limit)).fetchall()
+                    for r in rows:
+                        _add(r)
+                        if len(all_results) >= limit:
+                            break
+            except Exception:
+                pass
+
+            if len(all_results) >= limit:
+                break
+    except Exception:
+        pass
 
     for token in tokens:
         if len(all_results) >= limit:
@@ -512,9 +819,15 @@ def search_plants_fuzzy(query: str, limit: int = 5) -> List[Dict]:
         except Exception as e:
             _nlu_log.debug(f"[NLU] plant vec search err: {e}")
 
-    cur.close()
-    _nlu_log.debug(f"[NLU] search_plants_fuzzy({query!r}) → {len(all_results)} results")
-    return all_results[:limit]
+        # final ranking: prefer strong name matches, then closer vector distance
+        try:
+            all_results.sort(key=lambda r: (-int(r.get("_name_score", 0)), float(r.get("_vec_distance", 1e9))))
+        except Exception:
+            pass
+
+        cur.close()
+        _nlu_log.debug(f"[NLU] search_plants_fuzzy({query!r}) → {len(all_results)} results")
+        return all_results[:limit]
 
 def search_diseases_fuzzy(query: str, limit: int = 5) -> List[Dict]:
     """

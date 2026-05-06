@@ -646,7 +646,7 @@ export default function ChatInterface() {
   const [sending, setSending] = useState(false);
   const [selectedPlant, setSelectedPlant] = useState(null);
   const [isThinking, setIsThinking] = useState(false);
-  const [translitEnabled, setTranslitEnabled] = useState(false);
+  const [translitEnabled, setTranslitEnabled] = useState(true);
   const [translitLang, setTranslitLang] = useState("mr");
   const [translitMenuOpen, setTranslitMenuOpen] = useState(false);
   const [headerHidden, setHeaderHidden] = useState(false);
