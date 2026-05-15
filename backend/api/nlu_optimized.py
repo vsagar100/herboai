@@ -1,0 +1,1123 @@
+# api/nlu_optimized.py
+"""
+Optimized NLU for multilingual queries
+- Fast language detection
+- Smart entity extraction with synonym + i18n + vector matching
+- Marathi/Hindi postposition stripping for accurate token matching
+- Embedding-based semantic search for entity identification
+"""
+import re
+import logging
+from typing import Dict, List, Tuple
+from db import get_db
+
+_nlu_log = logging.getLogger("nlu")
+
+try:
+    from services.indic_translation_service import IndicTranslationService
+except Exception:
+    IndicTranslationService = None  # type: ignore
+
+# Language detection patterns
+DEVANAGARI_RE = re.compile(r"[\u0900-\u097F]")
+
+def _compute_name_score(row: Dict, qtokens: List[str], qnorm: str) -> int:
+    """
+    Heuristic score to prefer exact / whole-word matches over substring
+    or semantic hits. Higher is better.
+    """
+    score = 0
+    # fields to check (may be None)
+    names = [
+        (row.get("common_name_en") or ""),
+        (row.get("botanical_name") or ""),
+        (row.get("common_name_hi") or ""),
+        (row.get("common_name_mr") or ""),
+        (row.get("classical_name") or ""),
+    ]
+    # normalize function
+    def _norm(s: str) -> str:
+        return re.sub(r"[^\w\u0900-\u097F]+", " ", (s or "").lower()).strip()
+
+    norm_names = [_norm(n) for n in names]
+
+    # exact full-query match wins
+    for n in norm_names:
+        if n and n == qnorm:
+            return 100
+
+    # token-level scoring: expand token variants (transliteration, stems)
+    expanded_tokens_norm: List[str] = []
+    for tok in qtokens:
+        try:
+            variants = _expand_token_variants(tok)
+        except Exception:
+            variants = [tok]
+        for v in variants:
+            nv = _norm(v)
+            if nv and nv not in expanded_tokens_norm:
+                expanded_tokens_norm.append(nv)
+
+    for tok_norm in expanded_tokens_norm:
+        for n in norm_names:
+            if not n:
+                continue
+            if n == tok_norm:
+                score += 50
+            elif (" " + tok_norm + " ") in (" " + n + " "):
+                score += 30
+            elif tok_norm in n:
+                score += 8
+
+    # Penalize seed-specific rows when user didn't ask for seed
+    try:
+        en = (row.get("common_name_en") or "").lower()
+        if "seed" in en and all("seed" not in t for t in qtokens + [qnorm]):
+            score -= 40
+    except Exception:
+        pass
+
+    # synonyms / source hints (if available)
+    if row.get("source") == "synonym":
+        score += 5
+
+    return score
+
+
+def _expand_token_variants(token: str) -> List[str]:
+    """Expand a Latin/Devanagari token using TRANSLITERATION_MAP (both directions).
+    Returns normalized lowercase variants suitable for equality checks.
+    """
+    token_l = (token or "").lower().strip()
+    variants = {token_l}
+    # direct lookup
+    if token_l in TRANSLITERATION_MAP:
+        variants.add(TRANSLITERATION_MAP[token_l].lower())
+
+    # reverse lookup: find keys that map to this dev form
+    for k, v in TRANSLITERATION_MAP.items():
+        if v and v.lower() == token_l:
+            variants.add(k.lower())
+
+    # include any transliteration keys where token is a substring (amar -> amalaki)
+    for k, v in TRANSLITERATION_MAP.items():
+        try:
+            if token_l in (k or "").lower():
+                variants.add(k.lower())
+            if token_l in (v or "").lower():
+                variants.add(k.lower())
+        except Exception:
+            continue
+
+    # also include plain ascii alikes (underscore removal etc.)
+    variants.add(token_l.replace("_", " "))
+    variants.add(re.sub(r"[^\w\u0900-\u097F]+", " ", token_l))
+
+    return list(variants)
+# Lightweight markers as a fallback if shared detector is unavailable
+MR_MARKERS = {
+    "बद्दल", "माहिती", "तुळस", "गुळवेल", "औषधी", "काढा",
+    "आलं", "हिरडा", "आवळा", "दुखी", "साठी", "मला", "आहे"
+}
+
+# Hindi-specific markers
+HI_MARKERS = {
+    "के लिए", "क्या", "कैसे", "मुझे", "है", "में", "को",
+    "से", "बारे", "जानकारी", "औषधि"
+}
+
+# Common transliterations & phonetic variations
+TRANSLITERATION_MAP = {
+    # Plants
+    "ashwagandha": "अश्वगंधा", "ashvagandha": "अश्वगंधा",
+    "tulsi": "तुलसी", "tulasi": "तुलसी", "basil": "तुलसी",
+    "neem": "नीम", "nim": "नीम", "निंब": "नीम",
+    "guduchi": "गुडूची", "giloy": "गिलोय", "gulvel": "गुळवेल",
+    "gudmar": "गुढमार", "गुडमार": "गुढमार", "meshashringi": "गुढमार",
+    "amla": "आँवला", "amalaki": "आमलकी", "आवळा": "आँवला",
+    "haritaki": "हरीतकी", "harad": "हरड", "hirda": "हिरडा",
+    "turmeric": "हल्दी", "haldi": "हल्दी", "halad": "हळद", "हळदी": "हळद",
+    "ginger": "अदरक", "adrak": "अदरक", "आलं": "अदरक",
+    "brahmi": "ब्राह्मी", "shankhpushpi": "शंखपुष्पी",
+    "shatavari": "शतावरी", "विदारीकंद": "विदारीकंद",
+    "triphala": "त्रिफला", "arjuna": "अर्जुन",
+    
+    # Diseases
+    "diabetes": "मधुमेह", "madhumeha": "मधुमेह", "sugar": "मधुमेह",
+    "bp": "उच्च रक्तदाब", "hypertension": "उच्च रक्तदाब",
+    "cough": "खांसी", "khansi": "खांसी", "खोकला": "खांसी",
+    "cold": "सर्दी", "sardi": "सर्दी", "जुकाम": "सर्दी",
+    "fever": "ज्वर", "bukhar": "बुखार", "ताप": "ज्वर",
+    "arthritis": "गठिया", "जोडदुखी": "गठिया",
+    "constipation": "कब्ज", "kabaj": "कब्ज", "बद्धकोष्ठ": "कब्ज",
+    "acidity": "अम्लपित्त", "gas": "वायु", "गॅस": "वायु"
+}
+
+_QUERY_STOPWORDS = {
+    "how", "to", "prepare", "make", "making", "do", "use", "usage",
+    "powder", "tablet", "decoction", "kwath", "kwatha", "kadha",
+    "syrup", "capsule", "oil", "taila", "ghrita",
+    "for", "of", "the", "a", "an", "is", "what", "tell", "me",
+    "dosage", "dose", "remedy", "info", "information", "guide",
+    "about", "benefits", "help",
+    # Devanagari preparation / recipe stopwords (not entity-bearing)
+    "काढा", "काढ्या", "चूर्ण", "पावडर", "तेल", "घृत", "वटी",
+    "रस", "अवलेह", "अरिष्ट", "आसव", "क्वाथ",
+    "दूध", "पेय", "पद्धत", "पद्ध",
+    "बनवायचा", "बनवायची", "बनवायचे", "बनवाय",
+    "बनवण्याची", "बनवण्याचे", "बनवण्याचा", "बनवण्य", "बनवण्या",
+    "तयारी", "तयार", "विधी",
+}
+
+# ── Marathi / Hindi postposition & suffix stripping ──
+# These are common grammatical suffixes that get attached to nouns
+# e.g. "मुरुमांसाठी" = "मुरुम" + "ांसाठी" (for pimples)
+#      "निंबाचे"     = "निंब" + "ाचे"    (of neem)
+# Ordered longest-first so greedy stripping picks the right suffix.
+_INDIC_SUFFIXES = sorted([
+    # Marathi postpositions (साठी = for, ला = to, ने = by, etc.)
+    "ांसाठी", "ासाठी", "साठी",
+    "ामध्ये", "मध्ये",
+    "ाबद्दल", "बद्दल",
+    "ावर", "ावरून",
+    "ाला", "ाने", "ाचा", "ाची", "ाचे", "ाच्या",
+    "ांचा", "ांची", "ांचे", "ांच्या", "ांना",
+    "ीचा", "ीची", "ीचे", "ीच्या",  # e.g. हळदीचे → हळद
+    "चा", "ची", "चे", "च्या",
+    "ला", "ने", "ना", "त", "ं",
+    "ी",  # e.g. हळदी → हळद (matra-form suffix)
+    # Hindi postpositions (के लिए handled at phrase level above)
+    "ों", "ें", "ां",
+], key=len, reverse=True)
+
+# Marathi / Hindi stopword tokens (not entity-bearing)
+_INDIC_STOPWORDS = {
+    "साठी", "बद्दल", "माहिती", "काय", "कसे", "कसा", "करा",
+    "सांगा", "मला", "आहे", "आहेत", "हवे", "हवी", "बनवा",
+    "के", "लिए", "क्या", "कैसे", "बताओ", "मुझे", "है", "हैं",
+    "और", "या", "किंवा", "आणि",
+}
+
+
+def _strip_indic_suffix(token: str) -> List[str]:
+    """
+    Strip Marathi/Hindi postpositions / inflectional suffixes from a
+    Devanagari token and return all plausible stems (including original).
+    """
+    stems = [token]
+    for suf in _INDIC_SUFFIXES:
+        if token.endswith(suf) and len(token) > len(suf) + 1:
+            stem = token[:-len(suf)]
+            if stem not in stems:
+                stems.append(stem)
+    return stems
+
+
+def _tokenize_query_terms(query: str) -> List[str]:
+    """
+    Break query into unique tokens (>=2 chars for Devanagari, >=3 for Latin)
+    preserving order. Includes stemmed variants for Devanagari tokens.
+    """
+    raw_tokens = re.findall(r"[A-Za-z\u0900-\u097F]+", (query or "").lower())
+    tokens: List[str] = []
+    seen = set()
+    for tok in raw_tokens:
+        min_len = 2 if re.search(r"[\u0900-\u097F]", tok) else 3
+        if len(tok) < min_len or tok in seen:
+            continue
+        # Skip known Indic stopword tokens
+        if tok in _INDIC_STOPWORDS:
+            continue
+        seen.add(tok)
+        tokens.append(tok)
+        # Also add stemmed variants for Devanagari tokens
+        if re.search(r"[\u0900-\u097F]", tok):
+            for stem in _strip_indic_suffix(tok):
+                if stem != tok and stem not in seen and len(stem) >= 2:
+                    seen.add(stem)
+                    tokens.append(stem)
+    return tokens
+
+
+def _prioritized_tokens(query: str) -> List[str]:
+    """
+    Return the most meaningful tokens for lookup (filter stopwords first).
+    """
+    tokens = _tokenize_query_terms(query)
+    if not tokens:
+        return []
+
+    meaningful = [tok for tok in tokens if tok not in _QUERY_STOPWORDS]
+    return meaningful or tokens
+
+def detect_language(text: str) -> str:
+    """
+    Fast language detection
+    Returns: 'en', 'hi', or 'mr'
+    """
+    if not text:
+        return "en"
+
+    # If there's no Devanagari script at all, treat as English.
+    # This avoids misclassifying Latin-script queries (e.g. "Neem oil usage for skin")
+    # as hi/mr and then running incorrect translation.
+    if not DEVANAGARI_RE.search(text):
+        return "en"
+
+    # Prefer the shared detector (no model load; pure heuristics)
+    if IndicTranslationService:
+        try:
+            return IndicTranslationService.detect_lang(text)
+        except Exception:
+            pass
+
+    t = text.lower()
+
+
+    mr_count = sum(1 for marker in MR_MARKERS if marker in t)
+    hi_count = sum(1 for marker in HI_MARKERS if marker in t)
+    if mr_count > hi_count or any(word in t for word in ["गुळवेल", "तुळस", "आवळा", "हिरडा"]):
+        return "mr"
+    return "hi"
+
+
+def _has_plant_db_evidence(text: str, max_tokens: int = 4) -> bool:
+    """Quick, lightweight DB-backed check for plant-name evidence in the query.
+    Returns True if any prioritized token maps to a plant synonym / i18n / base-name.
+    This is intentionally conservative and cheap (LIMIT 1 checks).
+    """
+    try:
+        db = get_db()
+        cur = db.cursor()
+        tokens = _prioritized_tokens(text)[:max_tokens]
+        if not tokens:
+            return False
+
+        for tok in tokens:
+            variants = normalize_query_token(tok) or [tok]
+            for v in variants[:3]:
+                v_l = (v or "").lower().strip()
+                if not v_l:
+                    continue
+                try:
+                    if cur.execute("SELECT 1 FROM plant_synonyms WHERE LOWER(synonym)=? LIMIT 1", (v_l,)).fetchone():
+                        _nlu_log.debug(f"[NLU] DB evidence: plant_synonym exact for {v_l}")
+                        return True
+                except Exception:
+                    pass
+                try:
+                    if cur.execute("SELECT 1 FROM entity_i18n WHERE entity_type='plant' AND LOWER(text)=? LIMIT 1", (v_l,)).fetchone():
+                        _nlu_log.debug(f"[NLU] DB evidence: entity_i18n exact for {v_l}")
+                        return True
+                except Exception:
+                    pass
+                try:
+                    if cur.execute(
+                        """
+                        SELECT 1 FROM plants
+                        WHERE LOWER(common_name_en)=? OR LOWER(botanical_name)=? OR LOWER(common_name_hi)=? OR LOWER(common_name_mr)=? OR LOWER(classical_name)=? OR LOWER(sanskrit_name)=?
+                        LIMIT 1
+                        """,
+                        (v_l, v_l, v_l, v_l, v_l, v_l),
+                    ).fetchone():
+                        _nlu_log.debug(f"[NLU] DB evidence: plants exact for {v_l}")
+                        return True
+                except Exception:
+                    pass
+
+                # Fallback: substring LIKE match on base names
+                try:
+                    like = f"%{v_l}%"
+                    if cur.execute(
+                        """
+                        SELECT 1 FROM plants
+                        WHERE LOWER(common_name_en) LIKE ? OR LOWER(botanical_name) LIKE ? OR LOWER(common_name_hi) LIKE ? OR LOWER(common_name_mr) LIKE ? OR LOWER(classical_name) LIKE ? OR LOWER(sanskrit_name) LIKE ?
+                        LIMIT 1
+                        """,
+                        (like, like, like, like, like, like),
+                    ).fetchone():
+                        _nlu_log.debug(f"[NLU] DB evidence: plants LIKE for {v_l}")
+                        return True
+                except Exception:
+                    pass
+
+        return False
+    except Exception:
+        return False
+
+def classify_intent(text: str) -> str:
+    """
+    Classify user intent based on query patterns
+    Returns: remedy_lookup, plant_info, preparation_info, lifestyle_advice, none
+    """
+    t = (text or "").lower()
+
+    # --- 1) Explicit preparation queries (highest priority) ---
+    prep_patterns = [
+        "how to prepare", "how to make", "recipe for", "making", "prepare",
+        "kwatha", "decoction", "kashaya", "काढा", "काढे",
+        "churna", "powder", "चूर्ण", "oil", "taila", "तेल", "घृत",
+        "dosage", "dose", "मात्रा", "कसे बनवायचे", "कैसे बनाएं",
+        "कसा बनवायचा", "बनवण्याची पद्धत", "बनव"  # generic Marathi/Hindi 'to make'
+    ]
+    if any(p in t for p in prep_patterns):
+        return "preparation_info"
+
+    # --- 2) Signals for plant-info vs. remedy ---
+    plant_patterns = [
+        "what is", "about", "uses of", "benefits", "properties",
+        "detail", "details", "information", "info", "tell", "give", "give me", "describe", "what are", "what's",
+        "बद्दल", "के बारे", "फायदे", "गुण", "उपयोग", "माहिती", "जानकारी", "बताओ"
+    ]
+
+    remedy_patterns = [
+        "i have", "i am having", "suffering from", "remedy for",
+        "treatment for", "herbs for", "cure for", "help with",
+        "मला", "मुझे", "साठी", "के लिए", "उपचार", "औषधी"
+    ]
+
+    # Comprehensive disease keywords (100+ conditions)
+    disease_keywords = [
+        # Chronic conditions
+        "diabetes", "मधुमेह", "sugar", "शुगर",
+        "bp", "pressure", "hypertension", "उच्च रक्तदाब", "रक्तदाब",
+        "arthritis", "गठिया", "joint pain", "संधिवात", "जोडदुखी",
+        "asthma", "दमा", "श्वास", "breathing",
+        "thyroid", "थायरॉइड", "थायराइड",
+        
+        # Respiratory & seasonal
+        "cough", "खांसी", "खोकला",
+        "cold", "सर्दी", "जुकाम",
+        "fever", "ज्वर", "बुखार", "ताप",
+        "flu", "इन्फ्लूएंजा", "सर्दी-जुकाम",
+        "sore throat", "throat pain", "गळा दुखणे", "गले में दर्द",
+        "sinusitis", "सायनसायटिस", "नाक बंद",
+        
+        # Digestive
+        "acidity", "अम्लपित्त", "एसिडिटी",
+        "gas", "गॅस", "वायु", "पेट फूलना",
+        "constipation", "कब्ज", "बद्धकोष्ठ",
+        "diarrhea", "अतिसार", "दस्त", "loose motion",
+        "indigestion", "अपचन", "digestion",
+        "stomach", "पेट", "gastric", "ulcer", "व्रण",
+        "nausea", "मतली", "उलटी", "vomiting",
+        "ibs", "irritable bowel",
+        
+        # Skin conditions
+        "acne", "pimples", "मुरुम", "पिंपल्स", "फुंसी",
+        "eczema", "एक्जिमा", "खाज",
+        "psoriasis", "सोरायसिस", "त्वचा रोग",
+        "skin", "त्वचा", "rash", "खरुज", "चकत्ते",
+        "itching", "खाज", "खुजली",
+        "fungal", "बुरशी", "infection",
+        "vitiligo", "लेकोडर्मा", "पांढरे डाग",
+        "dark spots", "काळे डाग", "pigmentation",
+        
+        # Hair problems
+        "hair fall", "hair loss", "केस गळणे", "बाल झड़ना",
+        "baldness", "टक्कल", "alopecia",
+        "dandruff", "कोंडा", "रूसी",
+        "grey hair", "पांढरे केस", "सफेद बाल",
+        
+        # Mental health
+        "anxiety", "चिंता", "tension", "तणाव",
+        "stress", "तणाव", "मानसिक तणाव",
+        "depression", "नैराश्य", "उदासी",
+        "insomnia", "अनिद्रा", "झोप न येणे", "नींद न आना",
+        "sleep", "झोप", "नींद",
+        "memory", "स्मरणशक्ती", "याददाश्त",
+        
+        # Pain & inflammation
+        "pain", "दुखी", "दर्द", "वेदना",
+        "headache", "डोकेदुखी", "सिरदर्द",
+        "migraine", "मायग्रेन", "अर्धशिशी",
+        "backache", "पाठदुखी", "कमर दर्द",
+        "knee pain", "गुडघा दुखणे", "घुटने का दर्द",
+        "muscle pain", "स्नायू दुखणे",
+        "inflammation", "सूज", "सुजन",
+        
+        # Women's health
+        "periods", "मासिक पाळी", "माहवारी", "menstrual",
+        "pcos", "pcod", "पीसीओएस",
+        "menopause", "रजोनिवृत्ती",
+        "leucorrhea", "श्वेतप्रदर",
+        "pregnancy", "गर्भावस्था",
+        
+        # Metabolic & blood
+        "anemia", "अॅनिमिया", "रक्ताची कमी", "खून की कमी",
+        "weakness", "अशक्तपणा", "कमजोरी",
+        "fatigue", "थकवा", "थकान",
+        "weight loss", "वजन कमी", "वजन घटाना",
+        "obesity", "लठ्ठपणा", "मोटापा", "वजन",
+        "cholesterol", "कोलेस्टेरॉल",
+        
+        # Urinary & kidney
+        "kidney", "किडनी", "मूत्रपिंड",
+        "stone", "पथरी", "खडे",
+        "urine", "लघवी", "पेशाब", "uti",
+        
+        # Liver
+        "liver", "यकृत", "जिगर", "लिव्हर",
+        "jaundice", "कावीळ", "पीलिया",
+        "fatty liver", "फॅटी लिव्हर",
+        
+        # Others
+        "allergy", "ऍलर्जी", "अलर्जी",
+        "wound", "जखम", "घाव",
+        "burn", "भाजलेले", "जलना",
+        "piles", "मूळव्याध", "बवासीर",
+        "fistula", "भगंदर",
+        "worms", "किडे", "कृमी"
+    ]
+
+    has_plant = any(p in t for p in plant_patterns)
+    has_remedy = any(p in t for p in remedy_patterns)
+    has_disease_kw = any(k in t for k in disease_keywords)
+
+    # If disease words are present, or the user clearly asks for
+    # help/उपचार, treat as a remedy/condition query even if there are
+    # generic plant-info words like "उपयोग". This fixes Marathi
+    # sentences like "मला मधुमेह आहे. काय उपयोगी पडेल?".
+    if has_disease_kw or has_remedy:
+        return "remedy_lookup"
+
+    # DB-backed evidence: if query tokens map to plant synonyms / i18n / base names
+    # prefer plant_info even when surface signals are weak. This is conservative
+    # and DOES NOT override explicit disease/remedy signals above.
+    try:
+        has_plant_db = _has_plant_db_evidence(t)
+    except Exception:
+        has_plant_db = False
+
+    # Pure "about / uses / benefits" queries with no disease/remedy
+    # markers fall back to plant_info.
+    if has_plant or has_plant_db:
+        if has_plant_db and not has_plant:
+            _nlu_log.debug(f"[NLU] classify_intent: DB-backed plant evidence for query: {text!r}")
+        return "plant_info"
+
+    return "none"
+
+def normalize_query_token(token: str) -> List[str]:
+    """
+    Normalize a token to handle phonetic variations AND Indic inflections.
+    Returns list of possible variations (original + stemmed + transliterated).
+    """
+    token_lower = (token or "").lower().strip()
+
+    # Base variation list always includes the raw token
+    variations = [token_lower]
+
+    # ── Devanagari suffix stripping (comprehensive) ──
+    # Uses the global _INDIC_SUFFIXES list which covers postpositions,
+    # possessives, and oblique-case markers.
+    if re.search(r"[\u0900-\u097F]", token_lower):
+        for stem in _strip_indic_suffix(token_lower):
+            if stem != token_lower and stem not in variations:
+                variations.append(stem)
+    
+    # Check direct transliteration map
+    if token_lower in TRANSLITERATION_MAP:
+        variations.append(TRANSLITERATION_MAP[token_lower])
+    
+    # Check reverse (Devanagari -> English)
+    for eng, dev in TRANSLITERATION_MAP.items():
+        if token_lower == dev:
+            variations.append(eng)
+    
+    # Also check stems against transliteration map
+    for var in list(variations):
+        if var in TRANSLITERATION_MAP and TRANSLITERATION_MAP[var] not in variations:
+            variations.append(TRANSLITERATION_MAP[var])
+        for eng, dev in TRANSLITERATION_MAP.items():
+            if var == dev and eng not in variations:
+                variations.append(eng)
+    
+    # Common spelling variations (Latin script)
+    if re.search(r"[A-Za-z]", token_lower):
+        replacements = [
+            ("v", "w"), ("f", "ph"), ("s", "sh"), ("z", "j"),
+            ("aa", "a"), ("ee", "i"), ("oo", "u")
+        ]
+        for old, new in replacements:
+            if old in token_lower:
+                variations.append(token_lower.replace(old, new))
+    
+    return list(set(v for v in variations if v))
+
+def search_plants_fuzzy(query: str, limit: int = 5) -> List[Dict]:
+    """
+    Multi-strategy plant search:
+      1. Synonym table (plant_synonyms) — exact & LIKE
+      2. entity_i18n (multilingual names) — LIKE on name field
+      3. Base-table multilingual columns (common_name_hi, common_name_mr)
+      4. FTS5 full-text search
+      5. Vector/embedding similarity (semantic search)
+    Handles Devanagari tokens with automatic suffix stripping.
+    """
+    db = get_db()
+    cur = db.cursor()
+
+    tokens = _prioritized_tokens(query)
+    if not tokens:
+        return []
+
+    # Reorder tokens by whether they are likely to match DB name fields
+    try:
+        token_scores = {}
+        for i, tok in enumerate(tokens):
+            like = f"%{tok}%"
+            score = 0
+            try:
+                r = cur.execute("SELECT COUNT(1) as c FROM plant_synonyms WHERE LOWER(synonym) LIKE ?", (like,)).fetchone()
+                score += int(r["c"] or 0)
+            except Exception:
+                pass
+            try:
+                r = cur.execute("SELECT COUNT(1) as c FROM entity_i18n WHERE entity_type='plant' AND LOWER(text) LIKE ?", (like,)).fetchone()
+                score += int(r["c"] or 0)
+            except Exception:
+                pass
+            try:
+                r = cur.execute(
+                    """
+                    SELECT COUNT(1) as c FROM plants
+                    WHERE LOWER(common_name_en) LIKE ? OR LOWER(botanical_name) LIKE ? OR LOWER(common_name_hi) LIKE ? OR LOWER(common_name_mr) LIKE ? OR LOWER(classical_name) LIKE ? OR LOWER(sanskrit_name) LIKE ?
+                    """,
+                    (like, like, like, like, like, like),
+                ).fetchone()
+                score += int(r["c"] or 0)
+            except Exception:
+                pass
+            token_scores[tok] = (score, i)
+
+        # sort tokens by score desc, then original position
+        tokens = sorted(tokens, key=lambda t: (-token_scores.get(t, (0, 0))[0], token_scores.get(t, (0, 0))[1]))
+    except Exception:
+        pass
+
+    all_results: List[Dict] = []
+    seen_ids: set = set()
+
+    # prepare normalized forms for scoring
+    def _norm_query(s: str) -> str:
+        return re.sub(r"[^\w\u0900-\u097F]+", " ", (s or "").lower()).strip()
+
+    qtokens = tokens
+    qnorm = _norm_query(query)
+
+    def _add(row):
+        # accept either sqlite.Row or dict-like
+        if isinstance(row, dict):
+            rid = row.get("id")
+            rdict = dict(row)
+        else:
+            # sqlite.Row: convert to dict
+            rdict = dict(row)
+            rid = rdict.get("id")
+        if not rid or rid in seen_ids:
+            return
+        seen_ids.add(rid)
+
+        # If this row was returned by an exact equality query, prefer it strongly
+        src = (rdict.get("source") or "").lower()
+        if src in ("synonym", "i18n", "base"):
+            rdict["_name_score"] = 100
+        else:
+            try:
+                rdict["_name_score"] = _compute_name_score(rdict, qtokens, qnorm)
+            except Exception:
+                rdict["_name_score"] = 0
+
+        all_results.append(rdict)
+
+    # --- HIGH PRIORITY: exact equality matches (canonicalize different phrasings) ---
+    try:
+        primary_toks = [t for t in ([qnorm] + qtokens) if t]
+        for tok in primary_toks:
+            if len(all_results) >= limit:
+                break
+            # Expand token variants using transliteration/alias map
+            variants = _expand_token_variants(tok)
+
+            # 1) exact synonym match (for any variant)
+            try:
+                for v in variants:
+                    if len(all_results) >= limit:
+                        break
+                    rows = cur.execute("""
+                        SELECT p.*, 'synonym' AS source
+                        FROM plant_synonyms ps
+                        JOIN plants p ON p.id = ps.plant_id
+                        WHERE LOWER(ps.synonym) = ?
+                        LIMIT ?
+                    """, (v, limit)).fetchall()
+                    for r in rows:
+                        _add(r)
+                        if len(all_results) >= limit:
+                            break
+            except Exception:
+                pass
+
+            if len(all_results) >= limit:
+                break
+
+            # 2) exact multilingual i18n match
+            try:
+                for v in variants:
+                    if len(all_results) >= limit:
+                        break
+                    rows = cur.execute("""
+                        SELECT p.*, 'i18n' AS source
+                        FROM entity_i18n ei
+                        JOIN plants p ON p.id = ei.entity_id
+                        WHERE ei.entity_type = 'plant'
+                          AND LOWER(ei.text) = ?
+                        LIMIT ?
+                    """, (v, limit)).fetchall()
+                    for r in rows:
+                        _add(r)
+                        if len(all_results) >= limit:
+                            break
+            except Exception:
+                pass
+
+            if len(all_results) >= limit:
+                break
+
+            # 3) exact match in base-table name fields (including sanskrit/classical)
+            try:
+                for v in variants:
+                    if len(all_results) >= limit:
+                        break
+                    rows = cur.execute("""
+                        SELECT p.*, 'base' AS source
+                        FROM plants p
+                        WHERE LOWER(p.common_name_en) = ?
+                           OR LOWER(p.botanical_name) = ?
+                           OR LOWER(p.common_name_hi) = ?
+                           OR LOWER(p.common_name_mr) = ?
+                           OR LOWER(p.classical_name) = ?
+                           OR LOWER(p.sanskrit_name) = ?
+                        LIMIT ?
+                    """, (v, v, v, v, v, v, limit)).fetchall()
+                    for r in rows:
+                        _add(r)
+                        if len(all_results) >= limit:
+                            break
+            except Exception:
+                pass
+
+            if len(all_results) >= limit:
+                break
+    except Exception:
+        pass
+
+    for token in tokens:
+        if len(all_results) >= limit:
+            break
+        variations = normalize_query_token(token)
+
+        for variant in variations[:5]:
+            if len(all_results) >= limit:
+                break
+
+            # ── 1. plant_synonyms (existing) ──
+            try:
+                rows = cur.execute("""
+                    SELECT DISTINCT p.*
+                    FROM plant_synonyms ps
+                    JOIN plants p ON p.id = ps.plant_id
+                    WHERE LOWER(ps.synonym) LIKE ? OR LOWER(ps.synonym) LIKE ?
+                    LIMIT ?
+                """, (f"{variant}%", f"%{variant}%", limit)).fetchall()
+                for r in rows:
+                    _add(r)
+            except Exception as e:
+                _nlu_log.debug(f"[NLU] plant_synonyms search err: {e}")
+
+            # ── 2. entity_i18n (multilingual name lookup — THE KEY FIX) ──
+            try:
+                rows = cur.execute("""
+                    SELECT DISTINCT p.*
+                    FROM entity_i18n ei
+                    JOIN plants p ON p.id = ei.entity_id
+                    WHERE ei.entity_type = 'plant'
+                      AND ei.field = 'name'
+                      AND (LOWER(ei.text) LIKE ? OR LOWER(ei.text) LIKE ?)
+                    LIMIT ?
+                """, (f"{variant}%", f"%{variant}%", limit)).fetchall()
+                for r in rows:
+                    _add(r)
+            except Exception as e:
+                _nlu_log.debug(f"[NLU] entity_i18n plant search err: {e}")
+
+            # ── 3. Base-table multilingual columns ──
+            try:
+                rows = cur.execute("""
+                    SELECT * FROM plants
+                    WHERE LOWER(common_name_en) LIKE ?
+                       OR LOWER(common_name_hi) LIKE ?
+                       OR LOWER(common_name_mr) LIKE ?
+                       OR LOWER(botanical_name) LIKE ?
+                       OR LOWER(sanskrit_name) LIKE ?
+                    LIMIT ?
+                """, (f"%{variant}%", f"%{variant}%", f"%{variant}%",
+                      f"%{variant}%", f"%{variant}%", limit)).fetchall()
+                for r in rows:
+                    _add(r)
+            except Exception as e:
+                _nlu_log.debug(f"[NLU] plants base-table search err: {e}")
+
+    # ── 4. FTS5 (English tokens only — Devanagari may fail MATCH) ──
+    if len(all_results) < limit:
+        latin_tokens = [t for t in tokens[:3] if re.match(r'^[A-Za-z]+$', t)]
+        if latin_tokens:
+            fts_query = " OR ".join(latin_tokens)
+            try:
+                rows = cur.execute("""
+                    WITH hits AS (
+                      SELECT rowid AS id FROM plants_fts
+                      WHERE plants_fts MATCH ?
+                      LIMIT ?
+                    )
+                    SELECT p.* FROM hits h JOIN plants p ON p.id = h.id
+                """, (fts_query, limit - len(all_results))).fetchall()
+                for r in rows:
+                    _add(r)
+            except Exception as e:
+                _nlu_log.debug(f"[NLU] plants_fts err: {e}")
+
+    # ── 5. Vector / embedding semantic search (AI-powered) ──
+    if len(all_results) < limit:
+        try:
+            from services.chat import _embed_384
+            qvec = _embed_384(query)
+            # Try per-language vec table first, then legacy
+            for vtable in ("plant_vec_mr", "plant_vec_hi", "plant_vec_en", "plant_vec"):
+                try:
+                    id_col = "plant_id"
+                    vec_rows = cur.execute(f"""
+                        SELECT {id_col} AS id, distance
+                        FROM {vtable}
+                        WHERE embedding MATCH ?
+                          AND k = ?
+                    """, (qvec, limit * 2)).fetchall()
+                    for vr in vec_rows:
+                        vid = int(vr["id"]) if "id" in vr.keys() else int(vr[0])
+                        dist = float(vr["distance"]) if "distance" in vr.keys() else float(vr[1])
+                        if dist < 0.85 and vid not in seen_ids:  # tight threshold for confidence
+                            plant_row = cur.execute("SELECT * FROM plants WHERE id=?", (vid,)).fetchone()
+                            if plant_row:
+                                d = dict(plant_row)
+                                d["_vec_distance"] = dist
+                                _add(d)
+                    if all_results:
+                        break  # found hits, stop checking other tables
+                except Exception:
+                    continue
+        except Exception as e:
+            _nlu_log.debug(f"[NLU] plant vec search err: {e}")
+
+        # final ranking: prefer strong name matches, then closer vector distance
+        try:
+            all_results.sort(key=lambda r: (-int(r.get("_name_score", 0)), float(r.get("_vec_distance", 1e9))))
+        except Exception:
+            pass
+
+        cur.close()
+        _nlu_log.debug(f"[NLU] search_plants_fuzzy({query!r}) → {len(all_results)} results")
+        return all_results[:limit]
+
+def search_diseases_fuzzy(query: str, limit: int = 5) -> List[Dict]:
+    """
+    Multi-strategy disease search:
+      1. Synonym table (disease_synonyms) — exact & LIKE
+      2. entity_i18n (multilingual names) — LIKE on name field
+      3. Base-table multilingual columns (name_en, name_hi, name_mr)
+      4. FTS5 full-text search
+      5. Vector/embedding similarity (semantic search)
+    Handles Devanagari tokens with automatic suffix stripping.
+    """
+    db = get_db()
+    cur = db.cursor()
+
+    tokens = _prioritized_tokens(query)
+    if not tokens:
+        return []
+
+    all_results: List[Dict] = []
+    seen_ids: set = set()
+
+    def _add(row):
+        if isinstance(row, dict):
+            rid = row.get("id")
+        else:
+            rid = int(row["id"]) if "id" in row.keys() else int(row[0])
+        if rid not in seen_ids:
+            seen_ids.add(rid)
+            all_results.append(dict(row))
+
+    for token in tokens:
+        if len(all_results) >= limit:
+            break
+        variations = normalize_query_token(token)
+
+        for variant in variations[:5]:
+            if len(all_results) >= limit:
+                break
+
+            # ── 1. disease_synonyms (existing) ──
+            try:
+                rows = cur.execute("""
+                    SELECT DISTINCT d.*
+                    FROM disease_synonyms ds
+                    JOIN diseases d ON d.id = ds.disease_id
+                    WHERE LOWER(ds.synonym) LIKE ? OR LOWER(ds.synonym) LIKE ?
+                    LIMIT ?
+                """, (f"{variant}%", f"%{variant}%", limit)).fetchall()
+                for r in rows:
+                    _add(r)
+            except Exception as e:
+                _nlu_log.debug(f"[NLU] disease_synonyms search err: {e}")
+
+            # ── 2. entity_i18n (THE KEY FIX — search multilingual names) ──
+            try:
+                rows = cur.execute("""
+                    SELECT DISTINCT d.*
+                    FROM entity_i18n ei
+                    JOIN diseases d ON d.id = ei.entity_id
+                    WHERE ei.entity_type = 'disease'
+                      AND ei.field = 'name'
+                      AND (LOWER(ei.text) LIKE ? OR LOWER(ei.text) LIKE ?)
+                    LIMIT ?
+                """, (f"{variant}%", f"%{variant}%", limit)).fetchall()
+                for r in rows:
+                    _add(r)
+            except Exception as e:
+                _nlu_log.debug(f"[NLU] entity_i18n disease search err: {e}")
+
+            # ── 3. Base-table multilingual columns ──
+            try:
+                rows = cur.execute("""
+                    SELECT * FROM diseases
+                    WHERE LOWER(name_en) LIKE ?
+                       OR LOWER(name_hi) LIKE ?
+                       OR LOWER(name_mr) LIKE ?
+                    LIMIT ?
+                """, (f"%{variant}%", f"%{variant}%", f"%{variant}%", limit)).fetchall()
+                for r in rows:
+                    _add(r)
+            except Exception as e:
+                _nlu_log.debug(f"[NLU] diseases base-table search err: {e}")
+
+    # ── 4. FTS5 (English tokens) ──
+    if len(all_results) < limit:
+        latin_tokens = [t for t in tokens[:3] if re.match(r'^[A-Za-z]+$', t)]
+        if latin_tokens:
+            fts_query = " OR ".join(latin_tokens)
+            try:
+                rows = cur.execute("""
+                    WITH hits AS (
+                      SELECT rowid AS id FROM diseases_fts
+                      WHERE diseases_fts MATCH ?
+                      LIMIT ?
+                    )
+                    SELECT d.* FROM hits h JOIN diseases d ON d.id = h.id
+                """, (fts_query, limit - len(all_results))).fetchall()
+                for r in rows:
+                    _add(r)
+            except Exception as e:
+                _nlu_log.debug(f"[NLU] diseases_fts err: {e}")
+
+    # ── 5. Vector / embedding semantic search (AI-powered) ──
+    if len(all_results) < limit:
+        try:
+            from services.chat import _embed_384
+            qvec = _embed_384(query)
+            for vtable in ("disease_vec_mr", "disease_vec_hi", "disease_vec_en", "disease_vec"):
+                try:
+                    id_col = "disease_id"
+                    vec_rows = cur.execute(f"""
+                        SELECT {id_col} AS id, distance
+                        FROM {vtable}
+                        WHERE embedding MATCH ?
+                          AND k = ?
+                    """, (qvec, limit * 2)).fetchall()
+                    for vr in vec_rows:
+                        vid = int(vr["id"]) if "id" in vr.keys() else int(vr[0])
+                        dist = float(vr["distance"]) if "distance" in vr.keys() else float(vr[1])
+                        if dist < 0.85 and vid not in seen_ids:
+                            disease_row = cur.execute("SELECT * FROM diseases WHERE id=?", (vid,)).fetchone()
+                            if disease_row:
+                                d = dict(disease_row)
+                                d["_vec_distance"] = dist
+                                _add(d)
+                    if all_results:
+                        break
+                except Exception:
+                    continue
+        except Exception as e:
+            _nlu_log.debug(f"[NLU] disease vec search err: {e}")
+
+    cur.close()
+    _nlu_log.debug(f"[NLU] search_diseases_fuzzy({query!r}) → {len(all_results)} results")
+    return all_results[:limit]
+
+
+def search_preparations_fuzzy(query: str, limit: int = 5) -> List[Dict]:
+    """
+    Multi-strategy preparation search:
+      1. entity_i18n (multilingual name) — LIKE on name field
+      2. Base-table multilingual columns (name_en, name_hi, name_mr)
+      3. Vector/embedding similarity (semantic search)
+    Handles Devanagari tokens with automatic suffix stripping.
+    Returns preparation rows with plant info joined.
+    """
+    db = get_db()
+    cur = db.cursor()
+
+    tokens = _prioritized_tokens(query)
+    if not tokens:
+        return []
+
+    all_results: List[Dict] = []
+    seen_ids: set = set()
+
+    def _add(row):
+        rid = int(row["id"]) if "id" in row.keys() else int(row[0])
+        if rid not in seen_ids:
+            seen_ids.add(rid)
+            all_results.append(dict(row))
+
+    for token in tokens:
+        if len(all_results) >= limit:
+            break
+        variations = normalize_query_token(token)
+
+        for variant in variations[:5]:
+            if len(all_results) >= limit:
+                break
+
+            # ── 1. entity_i18n (multilingual name lookup) ──
+            try:
+                rows = cur.execute("""
+                    SELECT DISTINCT pr.*
+                    FROM entity_i18n ei
+                    JOIN preparations pr ON pr.id = ei.entity_id
+                    WHERE ei.entity_type = 'preparation'
+                      AND ei.field = 'name'
+                      AND (LOWER(ei.text) LIKE ? OR LOWER(ei.text) LIKE ?)
+                    LIMIT ?
+                """, (f"{variant}%", f"%{variant}%", limit)).fetchall()
+                for r in rows:
+                    _add(r)
+            except Exception as e:
+                _nlu_log.debug(f"[NLU] entity_i18n prep search err: {e}")
+
+            # ── 2. Base-table multilingual columns ──
+            try:
+                rows = cur.execute("""
+                    SELECT * FROM preparations
+                    WHERE LOWER(name_en) LIKE ?
+                       OR LOWER(name_hi) LIKE ?
+                       OR LOWER(name_mr) LIKE ?
+                       OR LOWER(classical_name) LIKE ?
+                    LIMIT ?
+                """, (f"%{variant}%", f"%{variant}%", f"%{variant}%",
+                      f"%{variant}%", limit)).fetchall()
+                for r in rows:
+                    _add(r)
+            except Exception as e:
+                _nlu_log.debug(f"[NLU] preparations base-table search err: {e}")
+
+    # ── 3. Vector / embedding semantic search ──
+    if len(all_results) < limit:
+        try:
+            from services.chat import _embed_384
+            qvec = _embed_384(query)
+
+            # NOTE:
+            # This codebase's canonical vec tables are named `prep_vec_{lang}` / `prep_vec`
+            # (see backend/db.py and backend/services/indexer.py).
+            # Keep backward-compat by also trying the older `preparation_vec_*` names.
+            for vtable in (
+                "prep_vec_mr", "prep_vec_hi", "prep_vec_en", "prep_vec",
+                "preparation_vec_mr", "preparation_vec_hi", "preparation_vec_en", "preparation_vec",
+            ):
+                try:
+                    id_col = "preparation_id"
+                    vec_rows = cur.execute(f"""
+                        SELECT {id_col} AS id, distance
+                        FROM {vtable}
+                        WHERE embedding MATCH ?
+                          AND k = ?
+                    """, (qvec, limit * 2)).fetchall()
+                    for vr in vec_rows:
+                        vid = int(vr["id"]) if "id" in vr.keys() else int(vr[0])
+                        dist = float(vr["distance"]) if "distance" in vr.keys() else float(vr[1])
+                        if dist < 0.75 and vid not in seen_ids:  # tight threshold
+                            prep_row = cur.execute(
+                                "SELECT * FROM preparations WHERE id=?", (vid,)
+                            ).fetchone()
+                            if prep_row:
+                                d = dict(prep_row)
+                                d["_vec_distance"] = dist
+                                _add(d)
+                    if all_results:
+                        break
+                except Exception:
+                    continue
+        except Exception as e:
+            _nlu_log.debug(f"[NLU] prep vec search err: {e}")
+
+    cur.close()
+    _nlu_log.debug(
+        f"[NLU] search_preparations_fuzzy({query!r}) → {len(all_results)} results"
+    )
+    return all_results[:limit]
+
+
+def extract_entities(text: str, text_en: str | None = None, prefer_en: bool = False) -> Tuple[List[Dict], List[Dict]]:
+    """
+    Extract plant and disease entities from query.
+    Multi-strategy: searches BOTH original text AND English translation.
+    Uses synonym tables, entity_i18n, base table columns, FTS, and vector search.
+    """
+    # Search on both original text AND English translation for maximum recall
+    plants_orig = search_plants_fuzzy(text, limit=3)
+    diseases_orig = search_diseases_fuzzy(text, limit=3)
+
+    # If English translation available and different, search on that too
+    if text_en and text_en.strip().lower() != (text or "").strip().lower():
+        plants_en = search_plants_fuzzy(text_en, limit=3)
+        diseases_en = search_diseases_fuzzy(text_en, limit=3)
+
+        # Merge (deduplicate by id)
+        seen_plant_ids = {p.get("id") for p in plants_orig}
+        for p in plants_en:
+            if p.get("id") not in seen_plant_ids:
+                plants_orig.append(p)
+                seen_plant_ids.add(p.get("id"))
+
+        seen_disease_ids = {d.get("id") for d in diseases_orig}
+        for d in diseases_en:
+            if d.get("id") not in seen_disease_ids:
+                diseases_orig.append(d)
+                seen_disease_ids.add(d.get("id"))
+
+    _nlu_log.debug(
+        f"[NLU] extract_entities: plants={[p.get('common_name_en') for p in plants_orig[:3]]}, "
+        f"diseases={[d.get('name_en') for d in diseases_orig[:3]]}"
+    )
+    return plants_orig[:3], diseases_orig[:3]
+
+# Backward compatibility exports
+__all__ = [
+    'detect_language',
+    'classify_intent', 
+    'extract_entities',
+    'search_plants_fuzzy',
+    'search_diseases_fuzzy',
+    'search_preparations_fuzzy',
+]

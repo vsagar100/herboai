@@ -1,0 +1,9 @@
+0|id|INTEGER|0||1
+1|entity_type|TEXT|1||0
+2|entity_id|INTEGER|1||0
+3|lang|TEXT|1||0
+4|field|TEXT|1||0
+5|text|TEXT|1||0
+6|status|TEXT|1|'auto'|0
+7|source|TEXT|1|'indictrans2'|0
+8|updated_at|TIMESTAMP|0|CURRENT_TIMESTAMP|0

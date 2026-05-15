@@ -1,0 +1,14 @@
+.venv
+.venv1
+backend/.venv
+backend/static/plant_images
+frontend/node_modules
+node_modules
+backend/routes/__pycache__
+backend/node_modules/__pycache__
+backend/database/sqlite3.exe
+backend/models/*
+*.pyc
+LETTER.*
+*.md
+backend/wheels

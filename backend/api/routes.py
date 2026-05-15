@@ -1,0 +1,406 @@
+from flask import Blueprint, request, jsonify, abort, current_app
+import base64
+import mimetypes
+import os
+import sqlite3
+import json
+import time
+from utils.pagination import get_pagination, absolute_file_url
+from repositories.plants_repo import (
+    list_plants, get_plant, get_plant_media, get_plant_synonyms, get_plants_for_disease, get_plant_stats
+)
+from repositories.diseases_repo import list_diseases, get_disease
+from repositories.preparations_repo import (
+    list_preparations, get_preparation, get_ingredients, get_indications
+)
+from repositories.search_repo import remedy_view_for_disease
+from services.chat import run_pipeline, warmup_pipeline
+from api.nlu_optimized import detect_language
+from db import get_db
+
+bp = Blueprint("api", __name__)
+
+def _safe_json(v):
+    if v is None:
+        return None
+    if isinstance(v, (dict, list)):
+        return v
+    if not isinstance(v, str):
+        return v
+    try:
+        return json.loads(v)
+    except Exception:
+        return v
+
+def _rowdict(row):
+    return dict(row) if row is not None else None
+
+
+@bp.get("/plants")
+def plants():
+    q = request.args.get("q")
+    lang = request.args.get("lang", "en")
+    ayush_system = request.args.get("ayush_system") or None
+    sort = request.args.get("sort") or None
+    page, size, offset = get_pagination()
+    data = list_plants(q, size, offset, lang=lang, ayush_system=ayush_system, sort=sort)
+    return {
+        "page": page, "size": size,
+        "items": data["items"], "count": data["count"], "total": data["total"]
+    }, 200
+
+
+@bp.get("/plants/stats")
+def plants_stats():
+    """Aggregate stats for the plant library dashboard."""
+    return jsonify(get_plant_stats())
+
+@bp.get("/plants/<int:plant_id>")
+def get_plant_detail(plant_id: int):
+    db = get_db()
+    db.row_factory = sqlite3.Row
+
+    # --- core plant row
+    plant_row = db.execute("""
+        SELECT id, botanical_name, common_name_en, common_name_hi, common_name_mr, sanskrit_name,
+               family, ayush_system, description, habitat,
+               parts_used, rasa, virya, vipaka, guna, dosha_effect, prabhava,
+               active_compounds, therapeutic_actions,
+               image_hero, is_endangered, cultivation_status,
+               created_at, updated_at
+        FROM plants
+        WHERE id = ?
+    """, (plant_id,)).fetchone()
+
+    if not plant_row:
+        abort(404, description="Plant not found")
+
+    plant = _rowdict(plant_row)
+
+    # parse JSON-ish columns
+    for k in ["parts_used","rasa","guna","dosha_effect","active_compounds","therapeutic_actions"]:
+        plant[k] = _safe_json(plant.get(k))
+
+    # --- synonyms (DISTINCT to avoid duplicate rows in seed data)
+    synonyms = [
+        _rowdict(r) for r in db.execute("""
+            SELECT DISTINCT synonym AS name, language, kind
+            FROM plant_synonyms
+            WHERE plant_id = ?
+            ORDER BY language, synonym
+        """, (plant_id,)).fetchall()
+    ]
+
+    # --- contraindications
+    contraindications = [
+        _rowdict(r) for r in db.execute("""
+            SELECT condition, severity, details, alternatives, reference
+            FROM contraindications
+            WHERE plant_id = ?
+            ORDER BY id
+        """, (plant_id,)).fetchall()
+    ]
+
+    # --- interactions (drug/herb/food)
+    interactions = [
+        _rowdict(r) for r in db.execute("""
+            SELECT interaction_type, interaction_with, effect, severity, mechanism, recommendation, reference
+            FROM interactions
+            WHERE plant_id = ?
+            ORDER BY id
+        """, (plant_id,)).fetchall()
+    ]
+
+    # --- preparations:
+    #  a) direct: primary_plant_id = plant_id
+    #  b) indirect: ingredients JSON contains this plant_id
+    # Use parameterized pattern to search inside JSON string.
+    #pattern = f'"plant_id": {plant_id}'
+    prep_rows = db.execute("""
+        SELECT DISTINCT 
+            p.id, p.name_en, p.name_hi, p.name_mr, p.classical_name,
+            p.ayush_system,
+            p.form_type, p.category,
+            p.preparation_steps, p.equipment_needed, p.duration, p.yield, 
+            p.storage, p.shelf_life,
+            p.dosage_json, p.timing, p.anupana, p.notes,
+            p.created_at, p.updated_at
+        FROM preparations p
+        WHERE p.id IN (
+            SELECT DISTINCT preparation_id 
+            FROM preparation_ingredients pi
+            WHERE pi.plant_id = ?
+        )
+        ORDER BY p.id
+    """, (plant_id,)).fetchall()
+
+    preparations = []
+    for r in prep_rows:
+        d = _rowdict(r)
+        for k in ["ingredients","preparation_steps","equipment_needed","dosage_json","indications"]:
+            d[k] = _safe_json(d.get(k))
+        preparations.append(d)
+
+    # --- associated diseases
+    disease_rows = db.execute("""
+        SELECT d.id, d.name_en, d.category,
+               pdm.efficacy_level, pdm.evidence_type, pdm.mechanism,
+               pdm.duration_of_use, pdm.special_instructions
+        FROM plant_disease_mapping pdm
+        JOIN diseases d ON d.id = pdm.disease_id
+        WHERE pdm.plant_id = ?
+        ORDER BY pdm.efficacy_level DESC, d.name_en
+    """, (plant_id,)).fetchall()
+    diseases = [_rowdict(r) for r in disease_rows]
+
+    # Build final payload
+    payload = {
+        "plant": plant,
+        "synonyms": synonyms,
+        "contraindications": contraindications,
+        "interactions": interactions,
+        "preparations": preparations,
+        "diseases": diseases,
+        "media": []
+    }
+    return jsonify(payload)
+
+# --- BRIEF BY ID (for chat thumbnails)
+@bp.get("/plants/<int:plant_id>/brief")
+def get_plant_brief(plant_id: int):
+    db = get_db()
+    db.row_factory = sqlite3.Row
+    row = db.execute("""
+        SELECT id, common_name_en, botanical_name, description, image_hero,
+               therapeutic_actions
+        FROM plants WHERE id = ?
+    """, (plant_id,)).fetchone()
+    if not row:
+        abort(404)
+    d = _rowdict(row)
+    d["therapeutic_actions"] = _safe_json(d.get("therapeutic_actions"))
+    d["image_url"] = absolute_file_url(d.get("image_hero"))
+    return jsonify(d)
+
+# --- BRIEF LIST / SEARCH (for library or smart search)
+@bp.get("/plants/brief")
+def list_plants_brief():
+    q = (request.args.get("q") or "").strip()
+    limit = int(request.args.get("limit") or 24)
+    offset = int(request.args.get("offset") or 0)
+
+    db = get_db()
+    db.row_factory = sqlite3.Row
+
+    if q:
+        # simple search: name like or FTS if available
+        rows = db.execute("""
+            SELECT id, common_name_en, botanical_name, description, image_hero, therapeutic_actions
+            FROM plants
+            WHERE common_name_en LIKE ? OR botanical_name LIKE ?
+            ORDER BY id LIMIT ? OFFSET ?
+        """, (f"%{q}%", f"%{q}%", limit, offset)).fetchall()
+    else:
+        rows = db.execute("""
+            SELECT id, common_name_en, botanical_name, description, image_hero, therapeutic_actions
+            FROM plants ORDER BY id LIMIT ? OFFSET ?
+        """, (limit, offset)).fetchall()
+
+    items = []
+    for r in rows:
+        d = _rowdict(r)
+        d["therapeutic_actions"] = _safe_json(d.get("therapeutic_actions"))
+        d["image_url"] = absolute_file_url(d.get("image_hero"))
+        items.append(d)
+
+    return jsonify({"items": items, "limit": limit, "offset": offset, "count": len(items)})
+
+
+@bp.get("/file_base64")
+def file_base64():
+    """Return a data URL for a media file under MEDIA_ROOT.
+
+    Query params:
+      - path: filename or path relative to MEDIA_ROOT (e.g. Vijayasar.jpg or images/Vijayasar.jpg)
+    """
+    path = (request.args.get("path") or "").strip()
+    if not path:
+        abort(400, description="Missing 'path' parameter")
+
+    # strip leading / and optional files/ prefix
+    if path.startswith("/"):
+        path = path[1:]
+    if path.startswith("files/"):
+        path = path[len("files/"):]
+
+    safe_path = os.path.normpath(path).lstrip(os.sep)
+    root = current_app.config.get("MEDIA_ROOT") or current_app.config.get("FILE_ROOT")
+    if not root:
+        abort(404)
+
+    full = os.path.join(root, safe_path)
+    if not os.path.isfile(full):
+        abort(404)
+
+    mime = mimetypes.guess_type(full)[0] or "application/octet-stream"
+    with open(full, "rb") as fh:
+        data = fh.read()
+    b64 = base64.b64encode(data).decode("ascii")
+    data_url = f"data:{mime};base64,{b64}"
+    return jsonify({"data_url": data_url})
+
+@bp.get("/diseases")
+def diseases():
+    q = request.args.get("q")
+    page, size, offset = get_pagination()
+    items = list_diseases(q, size, offset)
+    return {"page": page, "size": size, "items": items, "count": len(items)}, 200
+
+@bp.get("/diseases/<int:disease_id>")
+def disease_detail(disease_id: int):
+    d = get_disease(disease_id)
+    if not d:
+        return {"error": "Disease not found"}, 404
+    page, size, offset = get_pagination()
+    herbs = get_plants_for_disease(disease_id, size, offset)
+    return {"disease": d, "herbs": herbs, "page": page, "size": size}, 200
+
+@bp.get("/preparations")
+def preparations():
+    q = request.args.get("q")
+    page, size, offset = get_pagination()
+    items = list_preparations(q, size, offset)
+    return {"page": page, "size": size, "items": items, "count": len(items)}, 200
+
+@bp.get("/preparations/<int:prep_id>")
+def preparation_detail(prep_id: int):
+    prep = get_preparation(prep_id)
+    if not prep:
+        return {"error": "Preparation not found"}, 404
+    ing = get_ingredients(prep_id)
+    ind = get_indications(prep_id)
+    return {"preparation": prep, "ingredients": ing, "indications": ind}, 200
+
+@bp.get("/remedy")
+def remedy():
+    """
+    Compatibility: returns assembled rows via remedy_view
+    ?disease=Type%202%20Diabetes
+    """
+    disease = request.args.get("disease")
+    if not disease:
+        return {"error": "Missing 'disease' query param (name_en)"}, 400
+
+    page, size, offset = get_pagination()
+    items = remedy_view_for_disease(disease, size, offset)
+    return {"disease": disease, "items": items, "page": page, "size": size, "count": len(items)}, 200
+
+@bp.post("/query")
+def query():
+    """
+    Smart multilingual query endpoint
+    
+    Request:
+      {
+        "text": "मुझे मधुमेह है। कौन सी जड़ी बूटी मदद करेगी?",
+        "session_id": "optional-session-id"
+      }
+    
+    Response:
+      {
+        "answer": "मधुमेह के लिए गुडमार (Gymnema sylvestre) सबसे प्रभावी है...",
+        "intent": "remedy_lookup",
+        "detected_language": "hi",
+        "structured": {
+          "disease": {...},
+          "plants": [{...}, ...],
+          "preparations": [{...}, ...]
+        },
+        "metadata": {
+          "session_id": "...",
+          "duration_ms": 12450,
+          "entities_found": {"plants": 3, "diseases": 1}
+        }
+      }
+    """
+    data = request.get_json(silent=True) or {}
+    user_text = (data.get("text") or "").strip()
+    session_id = request.headers.get("x-session-id") or data.get("session_id") or f"web-{int(time.time())}"
+    
+    if not user_text:
+        return {"error": "Empty text"}, 400
+    
+    try:
+        lang = data.get("lang")
+        result = run_pipeline(user_text=user_text, session_id=session_id, lang=lang)
+        
+        # Transform to match frontend expectations from ChatInterface.jsx
+        # Frontend expects: {answer, intent, structured: {plants, disease, plant}, ...}
+        
+        response = {
+            "answer": result.get("answer", ""),
+            "intent": result.get("intent", "none"),
+            "detected_language": result.get("detected_language", "en"),
+            "structured": {},
+            "metadata": result.get("metadata", {})
+        }
+        
+        # Adapt structured data to frontend format
+        structured = result.get("structured", {})
+        
+        if "disease" in structured:
+            # Remedy lookup case
+            response["structured"] = {
+                "disease": structured["disease"],
+                "plants": structured.get("plants", [])[:5],  # Limit for frontend
+                "preparations": structured.get("preparations", [])[:3]
+            }
+        
+        elif "condition" in structured and "preparations" in structured:
+            # Remedy lookup case (newer format from handle_chat)
+            response["structured"] = {
+                "condition": structured["condition"],
+                "plants": structured.get("plants", [])[:5],  # Limit for frontend
+                "preparations": structured.get("preparations", [])[:6]  # Return up to 6 preps
+            }
+        
+        elif "plant" in structured:
+            # Plant info / plant preparation case
+            response_struct = {
+                "plant": structured["plant"],
+                "plants": [structured["plant"]],
+            }
+            if "preparations" in structured:
+                # Limit for UI; you can adjust or paginate later
+                response_struct["preparations"] = structured["preparations"][:3]
+            response["structured"] = response_struct
+
+        
+        else:
+            # Generic case
+            response["structured"] = {
+                "plants": structured.get("plants", [])[:5],
+                "diseases": structured.get("diseases", [])[:3]
+            }
+        
+        return jsonify(response), 200
+        
+    except Exception as e:
+        import traceback
+        print(f"[/api/query] Error: {e}")
+        print(traceback.format_exc())
+        
+        # Return error in appropriate language
+        lang = detect_language(user_text)
+        error_msgs = {
+            "hi": "क्षमा करें, एक त्रुटि हुई। कृपया पुनः प्रयास करें।",
+            "mr": "माफ करा, एक त्रुटी झाली. कृपया पुन्हा प्रयत्न करा.",
+            "en": "Sorry, an error occurred. Please try again."
+        }
+        
+        return {
+            "error": str(e),
+            "answer": error_msgs.get(lang, error_msgs["en"]),
+            "intent": "error",
+            "detected_language": lang
+        }, 500
